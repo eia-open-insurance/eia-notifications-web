@@ -34,6 +34,25 @@ Notifications federated remote: screens, widgets, record tabs, and transaction c
 
 No business logic; all actions go through the domain service.
 
+## Implemented first slice
+
+- React 19 and React DOM only at runtime; Webpack 5 Module Federation remote `eia_notifications` exposing `./App`.
+- Async bootstrap (`index.jsx` loads `bootstrap.jsx`, which mounts React).
+- Dev server port **3010**, proxying `/api` to `http://localhost:8100`.
+- Workbench lists notifications, creates a draft, and sends a notification through the domain API with `X-EIA-Tenant`.
+- `@swc/core` is pinned to exactly `1.10.7`.
+- One Playwright test mocks the API and exercises list + create.
+
+## Local verification
+
+```powershell
+npm install
+npm run build
+npm test
+```
+
+`npm start` serves the remote at `http://localhost:3010`; `remoteEntry.js` is emitted by the production build.
+
 ## License
 
 Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
