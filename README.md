@@ -1,7 +1,7 @@
 # eia-notifications-web
 
-- GitHub organization: `eia-platform`
-- Repository URL: https://github.com/eia-platform/eia-notifications-web
+- GitHub organization: `eia-open-insurance`
+- Repository URL: https://github.com/eia-open-insurance/eia-notifications-web
 - Type: Federated front-end
 - Deployable: Yes
 - Owner: Notifications
@@ -34,3 +34,6 @@ Notifications federated remote: screens, widgets, record tabs, and transaction c
 
 No business logic; all actions go through the domain service.
 
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
