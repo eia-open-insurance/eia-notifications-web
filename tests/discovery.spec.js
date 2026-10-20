@@ -389,3 +389,67 @@ test('explains delivery context and links the recipient without inventing a sour
   await page.getByTestId('overview-recipient-link').click();
   await expect(page).toHaveURL(new RegExp(`/party\\?record=${PARTY.id}$`));
 });
+
+test('resolves the recipient name · party number in the header, Overview, Delivery, and context panel', async ({ page }) => {
+  const partyRequests = [];
+
+  await installNotificationMock(page, { queue: [NOTIFICATION_A], catalogue: [NOTIFICATION_A] });
+  await page.route(/\/api\/v1\/parties\/[0-9a-f-]+$/i, async (route) => {
+    const url = new URL(route.request().url());
+    partyRequests.push({
+      id: url.pathname.split('/').pop(),
+      tenant: route.request().headers()['x-eia-tenant']
+    });
+    await json(route, 200, {
+      id: PARTY.id,
+      tenantId: TENANT,
+      partyNumber: 'PTY-2026-000001',
+      partyType: 'ORGANIZATION',
+      displayName: 'Acme Manufacturing',
+      legalName: 'Acme Manufacturing, Inc.',
+      status: 'ACTIVE'
+    });
+  });
+
+  await page.goto(`/?record=${NOTIFICATION_A.id}`);
+
+  const label = 'Acme Manufacturing · PTY-2026-000001';
+  const href = `/party?record=${PARTY.id}`;
+
+  await expect(page.getByTestId('record-recipient-link')).toHaveText(label);
+  await expect(page.getByTestId('record-recipient-link')).toHaveAttribute('href', href);
+  await expect(page.getByTestId('overview-recipient-link')).toHaveText(label);
+  await expect(page.getByTestId('overview-recipient-link')).toHaveAttribute('href', href);
+  await expect(page.getByTestId('context-recipient-link')).toContainText(label);
+  await expect(page.getByTestId('context-recipient-link')).toHaveAttribute('href', href);
+
+  await page.getByRole('tab', { name: 'Delivery' }).click();
+  await expect(page.getByTestId('delivery-table')).toContainText(label);
+  await expect(page.getByTestId('delivery-table').getByRole('link')).toHaveAttribute('href', href);
+
+  expect(partyRequests).toEqual([{ id: PARTY.id, tenant: TENANT }]);
+});
+
+test('falls back to the short recipient UUID when the Party API returns 404', async ({ page }) => {
+  await installNotificationMock(page, { queue: [NOTIFICATION_A], catalogue: [NOTIFICATION_A] });
+  await page.route(/\/api\/v1\/parties\/[0-9a-f-]+$/i, async (route) => {
+    await json(route, 404, problem('EIA-NTF-9001', 'Party was not found.', 404));
+  });
+
+  await page.goto(`/?record=${NOTIFICATION_A.id}`);
+
+  // The notification record renders while the party lookup is failing.
+  await expect(page.getByRole('heading', { name: NOTIFICATION_A.notificationNumber })).toBeVisible();
+
+  const short = '0192f3a4…';
+  await expect(page.getByTestId('record-recipient-link')).toHaveText(short);
+  await expect(page.getByTestId('overview-recipient-link')).toHaveText(short);
+  await expect(page.getByTestId('context-recipient-link')).toContainText(short);
+  await expect(page.getByTestId('record-recipient-link')).toHaveAttribute(
+    'href',
+    `/party?record=${PARTY.id}`
+  );
+
+  await page.getByRole('tab', { name: 'Delivery' }).click();
+  await expect(page.getByTestId('delivery-table')).toContainText(short);
+});

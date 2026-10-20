@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import './ui.css';
 import EntityPicker from './EntityPicker.jsx';
 import { navigate, recordHref } from './navigation.js';
+import { partyEndpoint, partyRecordLabel } from './party.js';
 
 const TENANT = '11111111-1111-7111-8111-111111111111';
 const DEMO_PARTY_ID = '0192f3a4-0000-7000-8000-000000000002';
@@ -199,6 +200,7 @@ export default function App() {
   const [queueFilter, setQueueFilter] = useState('');
   const [recipientPicked, setRecipientPicked] = useState(false);
   const [recipientLabel, setRecipientLabel] = useState('');
+  const [recipientParties, setRecipientParties] = useState({});
 
   const notificationsRef = useRef([]);
   const createOpenRef = useRef(false);
@@ -210,7 +212,8 @@ export default function App() {
 
   function recipientLabelFor(notification) {
     if (!notification?.recipientPartyId) return '';
-    return notification.recipientPartyId === form.recipientPartyId ? recipientLabel : '';
+    return recipientParties[notification.recipientPartyId]
+      || (notification.recipientPartyId === form.recipientPartyId ? recipientLabel : '');
   }
 
   async function load(preferredId) {
@@ -389,6 +392,35 @@ export default function App() {
       alive = false;
     };
   }, [selectedId, detailNonce]);
+
+  const selectedRecipientPartyId = selected?.recipientPartyId || '';
+
+  /**
+   * Resolves the recipient through the Party API after the notification is
+   * already on screen. A 404 or an unavailable Party service never blocks
+   * rendering: the cross-links fall back to the short UUID.
+   */
+  useEffect(() => {
+    if (!selectedRecipientPartyId) return undefined;
+    let alive = true;
+    api(partyEndpoint(selectedRecipientPartyId))
+      .then((party) => {
+        if (!alive) return;
+        const label = partyRecordLabel(party);
+        if (!label) return;
+        setRecipientParties((current) => (
+          current[selectedRecipientPartyId] === label
+            ? current
+            : { ...current, [selectedRecipientPartyId]: label }
+        ));
+      })
+      .catch(() => {
+        // Party lookup is an enhancement; the notification still renders.
+      });
+    return () => {
+      alive = false;
+    };
+  }, [selectedRecipientPartyId]);
 
   useEffect(() => {
     if (!createOpen) return undefined;
@@ -693,6 +725,20 @@ export default function App() {
             record is not exposed in this API slice, so this workbench cannot link to it or invent a
             link.
           </p>
+          {recipientId && (
+            <div className="links">
+              <a
+                href={recordHref('party', recipientId)}
+                onClick={(event) => {
+                  event.preventDefault();
+                  openParty(recipientId);
+                }}
+                data-testid="context-recipient-link"
+              >
+                Recipient party record · {recipientText}
+              </a>
+            </div>
+          )}
         </section>
 
         <section
@@ -819,7 +865,9 @@ export default function App() {
                   <span className="record-primary">{notification.notificationNumber}</span>
                   <span className="record-secondary">{notification.subject}</span>
                   <span className="record-secondary">
-                    To {shortId(notification.recipientPartyId)} · {notification.channel}
+                    To {recipientLabelFor(notification) || shortId(notification.recipientPartyId)}
+                    {' · '}
+                    {notification.channel}
                   </span>
                   <span>
                     <span className={`eia-pill ${statusTone(notification.status)}`}>

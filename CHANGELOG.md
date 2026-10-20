@@ -22,3 +22,6 @@ The format is based on Keep a Changelog and the project uses Semantic Versioning
   helpers for cross-vertical links.
 - Playwright discovery coverage for URL state, queue filtering, the party picker payload, and the
   delivery context/cross-links.
+- Recipient cross-link resolution through `GET /api/v1/parties/{id}`: the header, Overview,
+  Delivery, and context panel show `name · party number` link text with a short-UUID fallback, and
+  a 404 never blocks the record.
