@@ -15,6 +15,7 @@ workbench holds no business logic. Every action calls the domain service.
 | Overview | Notification facts, recipient party cross-links, the "Why this matters" delivery context panel, and a related-records note |
 | Delivery | Record-level channel, status, recipient, scheduled, and sent state |
 | Template | Bound template code/version and the rendered subject/body |
+| Activity | Event-derived, append-only timeline read from `GET /api/v1/events/aggregate/{id}?limit=50` with `X-EIA-Tenant`: timestamp, readable event name, inbox status, record version, and payload facts (channel, recipient party, type, status). Card-local loading, empty, and error states; refreshes on demand and on selection |
 
 ## Record discovery
 
@@ -46,14 +47,18 @@ Create, send, and the problem-error paths are unchanged.
 send transition, and problem errors. `tests/discovery.spec.js` covers `?record=`
 selection and `popstate`, deep-link discovery through the search projection,
 `?new=1`, queue filtering and clearing, the recipient picker request/payload and
-label/link, and the delivery context/cross-links. Run with `npm test`; the
-Playwright config starts the dev server on port 3010.
+label/link, and the delivery context/cross-links. `tests/activity.spec.js`
+covers the event-timeline path/limit/tenant header, newest-first rendering,
+payload facts, the empty state, a contained 503, explicit refresh, and refetch
+when another notification is selected. Run with `npm test`; the Playwright
+config starts the dev server on port 3010.
 
 ## Remaining gaps
 
 - The Notifications API exposes delivery only at record level; per-attempt
   delivery history and the source business record are not available in this
-  slice.
+  slice. The Activity tab surfaces emitted notification events, not delivery
+  attempts.
 - Pagination, optimistic concurrency headers, and idempotency keys are not used
   by the remote.
 - No accessibility audit beyond semantic labels, tab state, and live regions.

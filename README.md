@@ -41,7 +41,7 @@ No business logic; all actions go through the domain service.
 - Dev server port **3010**, proxying `/api` to `http://localhost:8100`.
 - Workbench lists notifications, creates a draft, and sends a notification through the domain API with `X-EIA-Tenant`.
 - Shared EIA operational record design: page head, notification queue, record header, summary grid, and
-  Overview/Delivery/Template tabs; create is a dialog.
+  Overview/Delivery/Template/Activity tabs; create is a dialog.
 - URL record discovery: `?record={id|number}` opens a notification, `?new=1` opens the create dialog,
   and `popstate` keeps the workbench in step with shell navigation. A notification number missing from
   the loaded queue is resolved through `/api/v1/notifications/search`.
@@ -51,9 +51,16 @@ No business logic; all actions go through the domain service.
   the party number/name label and a `/party?record=` cross-link.
 - Overview recipient party cross-links, a "Why this matters" delivery context panel, and a related
   records note that does not invent the source business record the API slice does not expose.
+- Activity tab reads `GET /api/v1/events/aggregate/{notificationId}?limit=50` with the tenant header
+  and renders an event-derived, append-only timeline: timestamp, readable event name plus the raw
+  type, inbox status, record version, and payload facts (channel, recipient party, type, status).
+  The card refetches on selection, has card-local loading/empty/error states, refreshes on demand,
+  and a 503 never blocks the notification record.
 - `@swc/core` is pinned to exactly `1.10.7`.
 - Playwright tests mock the API and cover list + detail, create, send, problem errors, URL discovery,
   queue filtering, the recipient picker payload, and the delivery context/cross-links.
+- Playwright activity coverage for the aggregate path/limit/tenant header, newest-first order,
+  payload facts, empty and 503 states, explicit refresh, and selection refetch.
 
 ## Local verification
 

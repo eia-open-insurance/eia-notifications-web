@@ -1,8 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import './ui.css';
+import ActivityTimeline from './ActivityTimeline.jsx';
 import EntityPicker from './EntityPicker.jsx';
 import { navigate, recordHref } from './navigation.js';
 import { partyEndpoint, partyRecordLabel } from './party.js';
+import { activityEvents, aggregateEventsEndpoint } from './events.js';
 
 const TENANT = '11111111-1111-7111-8111-111111111111';
 const DEMO_PARTY_ID = '0192f3a4-0000-7000-8000-000000000002';
@@ -27,8 +29,11 @@ const SENDABLE_STATUSES = ['CREATED', 'QUEUED'];
 const TABS = [
   { id: 'overview', label: 'Overview' },
   { id: 'delivery', label: 'Delivery' },
-  { id: 'template', label: 'Template' }
+  { id: 'template', label: 'Template' },
+  { id: 'activity', label: 'Activity' }
 ];
+
+const EMPTY_ACTIVITY = { recordId: '', items: [], loading: false, error: '' };
 
 const EMPTY_FORM = {
   notificationType: 'NEW_CLAIM_NOTICE',
@@ -201,14 +206,24 @@ export default function App() {
   const [recipientPicked, setRecipientPicked] = useState(false);
   const [recipientLabel, setRecipientLabel] = useState('');
   const [recipientParties, setRecipientParties] = useState({});
+  const [activity, setActivity] = useState(EMPTY_ACTIVITY);
+  const [activityNonce, setActivityNonce] = useState(0);
 
   const notificationsRef = useRef([]);
   const createOpenRef = useRef(false);
   const applyingUrlRef = useRef(false);
+  const activityRequestRef = useRef(0);
 
   const selectedRow = notifications.find((notification) => notification.id === selectedId) || null;
   const selected = detail && detail.id === selectedId ? detail : selectedRow;
   const filteredNotifications = filterNotifications(notifications, queueFilter);
+  // Never show one notification's events under another notification's header
+  // while a selection change is still in flight.
+  const activityView = !selected
+    ? EMPTY_ACTIVITY
+    : activity.recordId === selected.id
+      ? activity
+      : { recordId: selected.id, items: [], loading: true, error: '' };
 
   function recipientLabelFor(notification) {
     if (!notification?.recipientPartyId) return '';
@@ -393,6 +408,50 @@ export default function App() {
     };
   }, [selectedId, detailNonce]);
 
+  /**
+   * Activity is derived from the platform event stream, keyed by the
+   * notification id that owns the aggregate. It loads as soon as a record is
+   * selected and stays card-local: a slow or unavailable event service never
+   * blocks the notification record or changes its state.
+   */
+  useEffect(() => {
+    const recordId = selectedId || '';
+    const requestId = activityRequestRef.current + 1;
+    activityRequestRef.current = requestId;
+
+    if (!recordId) {
+      setActivity(EMPTY_ACTIVITY);
+      return undefined;
+    }
+
+    let alive = true;
+    setActivity({ recordId, items: [], loading: true, error: '' });
+
+    api(aggregateEventsEndpoint(recordId))
+      .then((body) => {
+        if (!alive || activityRequestRef.current !== requestId) return;
+        setActivity({
+          recordId,
+          items: activityEvents(body),
+          loading: false,
+          error: ''
+        });
+      })
+      .catch(() => {
+        if (!alive || activityRequestRef.current !== requestId) return;
+        setActivity({
+          recordId,
+          items: [],
+          loading: false,
+          error: 'Activity timeline is temporarily unavailable.'
+        });
+      });
+
+    return () => {
+      alive = false;
+    };
+  }, [selectedId, activityNonce]);
+
   const selectedRecipientPartyId = selected?.recipientPartyId || '';
 
   /**
@@ -457,7 +516,10 @@ export default function App() {
     setNotice('');
     try {
       await load(selectedId);
-      if (selectedId) setDetailNonce((value) => value + 1);
+      if (selectedId) {
+        setDetailNonce((value) => value + 1);
+        setActivityNonce((value) => value + 1);
+      }
     } catch (cause) {
       setError(errorText(cause));
     }
@@ -543,6 +605,7 @@ export default function App() {
       );
       await load(notification.id);
       setDetailNonce((value) => value + 1);
+      setActivityNonce((value) => value + 1);
     } catch (cause) {
       setError(errorText(cause));
     } finally {
@@ -555,6 +618,27 @@ export default function App() {
     const recipientText = recipientId
       ? recipientLabelFor(notification) || shortId(recipientId)
       : '—';
+
+    if (activeTab === 'activity') {
+      return (
+        <section
+          id="panel-activity"
+          role="tabpanel"
+          aria-labelledby="tab-activity"
+        >
+          <div className="eia-section-title">
+            <h2>Activity</h2>
+            <span className="eia-muted">Newest first · derived from platform events</span>
+          </div>
+          <ActivityTimeline
+            items={activityView.items}
+            loading={activityView.loading}
+            error={activityView.error}
+            onRefresh={() => setActivityNonce((value) => value + 1)}
+          />
+        </section>
+      );
+    }
 
     if (activeTab === 'delivery') {
       return (
