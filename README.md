@@ -40,8 +40,10 @@ No business logic; all actions go through the domain service.
 - Async bootstrap (`index.jsx` loads `bootstrap.jsx`, which mounts React).
 - Dev server port **3010**, proxying `/api` to `http://localhost:8100`.
 - Workbench lists notifications, creates a draft, and sends a notification through the domain API with `X-EIA-Tenant`.
+- Shared EIA operational record design: page head, notification queue, record header, summary grid, and
+  Overview/Delivery/Template tabs; create is a dialog.
 - `@swc/core` is pinned to exactly `1.10.7`.
-- One Playwright test mocks the API and exercises list + create.
+- Playwright tests mock the API and cover list + detail, create, send, and problem errors.
 
 ## Local verification
 
