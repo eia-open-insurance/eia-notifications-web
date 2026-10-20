@@ -1,8 +1,14 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import './ui.css';
+import EntityPicker from './EntityPicker.jsx';
+import { navigate, recordHref } from './navigation.js';
 
 const TENANT = '11111111-1111-7111-8111-111111111111';
 const DEMO_PARTY_ID = '0192f3a4-0000-7000-8000-000000000002';
+const PARTY_SEARCH_ENDPOINT = '/api/v1/parties/search';
+const SEARCH_LIMIT = 10;
+const QUEUE_FILTER_PLACEHOLDER = 'Filter notifications by number, subject, recipient, channel, or status…';
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const NOTIFICATION_TYPES = [
   'NEW_CLAIM_NOTICE',
@@ -90,6 +96,57 @@ function errorText(error) {
   return error.code ? `${error.code}: ${error.message}` : error.message;
 }
 
+function readUrlState() {
+  if (typeof window === 'undefined') return { record: '', create: false };
+  const params = new URLSearchParams(window.location.search);
+  return { record: params.get('record') || '', create: params.get('new') === '1' };
+}
+
+/**
+ * The remote is mounted either at the shell route (/notifications) or
+ * directly at the dev-server root (/). Only treat the URL as notification
+ * state on those routes so a cross-link to /party is not read as a record.
+ */
+function onNotificationsRoute() {
+  if (typeof window === 'undefined') return false;
+  const path = window.location.pathname.replace(/\/+$/, '');
+  return path === '' || path === '/' || path.endsWith('/notifications');
+}
+
+/**
+ * Keeps the address bar in step with the selected notification and the
+ * create dialog. `notify: false` leaves routing to the shell; the workbench
+ * already applied the same state locally.
+ */
+function writeUrl({ record = '', create = false, replace = false } = {}) {
+  if (typeof window === 'undefined' || !onNotificationsRoute()) return;
+  const base = recordHref(window.location.pathname || '/', record);
+  const target = create ? `${base}${record ? '&' : '?'}new=1` : base;
+  if (target === `${window.location.pathname}${window.location.search}`) return;
+  navigate(target, { replace, notify: false });
+}
+
+function partyLabel(item) {
+  return [item?.label, item?.secondary].filter(Boolean).join(' · ');
+}
+
+function filterNotifications(notifications, filter) {
+  const term = filter.trim().toLowerCase();
+  if (!term) return notifications;
+  return notifications.filter((notification) =>
+    [
+      notification.notificationNumber,
+      notification.subject,
+      notification.recipientPartyId,
+      notification.channel,
+      humanize(notification.channel),
+      notification.status,
+      notification.notificationType,
+      humanize(notification.notificationType)
+    ].some((value) => String(value || '').toLowerCase().includes(term))
+  );
+}
+
 function formatInstant(value) {
   if (!value) return '—';
   return new Date(value).toLocaleString();
@@ -139,26 +196,177 @@ export default function App() {
   const [creating, setCreating] = useState(false);
   const [sending, setSending] = useState(false);
   const [detailNonce, setDetailNonce] = useState(0);
+  const [queueFilter, setQueueFilter] = useState('');
+  const [recipientPicked, setRecipientPicked] = useState(false);
+  const [recipientLabel, setRecipientLabel] = useState('');
+
+  const notificationsRef = useRef([]);
+  const createOpenRef = useRef(false);
+  const applyingUrlRef = useRef(false);
 
   const selectedRow = notifications.find((notification) => notification.id === selectedId) || null;
   const selected = detail && detail.id === selectedId ? detail : selectedRow;
+  const filteredNotifications = filterNotifications(notifications, queueFilter);
+
+  function recipientLabelFor(notification) {
+    if (!notification?.recipientPartyId) return '';
+    return notification.recipientPartyId === form.recipientPartyId ? recipientLabel : '';
+  }
 
   async function load(preferredId) {
     const data = await api('/api/v1/notifications');
     const rows = Array.isArray(data) ? data : [];
+    notificationsRef.current = rows;
     setNotifications(rows);
     setSelectedId((current) => {
       if (preferredId && rows.some((notification) => notification.id === preferredId)) return preferredId;
       if (current && rows.some((notification) => notification.id === current)) return current;
+
+      const { record } = readUrlState();
+      if (record && onNotificationsRoute()) {
+        const match = rows.find(
+          (notification) => notification.id === record || notification.notificationNumber === record
+        );
+        if (match) return match.id;
+        if (UUID_PATTERN.test(record)) return record;
+        return current;
+      }
+
       return rows[0]?.id || null;
     });
     return rows;
   }
 
+  function rememberNotification(notification) {
+    if (!notification?.id) return;
+    const merge = (rows) => {
+      if (rows.some((row) => row.id === notification.id)) {
+        return rows.map((row) => (row.id === notification.id ? { ...row, ...notification } : row));
+      }
+      return [notification, ...rows];
+    };
+    notificationsRef.current = merge(notificationsRef.current);
+    setNotifications((current) => merge(current));
+  }
+
+  /**
+   * Record discovery for a `?record=` deep link that is not in the loaded
+   * queue. The notifications search projection resolves a notification
+   * number, then the component selects the returned record id.
+   */
+  async function discoverNotificationId(record) {
+    const body = await api(
+      `/api/v1/notifications/search?q=${encodeURIComponent(record)}&limit=${SEARCH_LIMIT}`
+    );
+    const items = Array.isArray(body) ? body : Array.isArray(body?.items) ? body.items : [];
+    const match = items.find(
+      (item) => item.id === record
+        || item.label === record
+        || String(item.href || '').endsWith(`record=${record}`)
+    ) || items[0];
+    return match?.id || null;
+  }
+
+  /**
+   * Applies ?record= and ?new=1. Links from global search open a record by id;
+   * a notification number is resolved through the search projection so a
+   * deep link does not silently fall back to the first queue row.
+   */
+  async function applyUrlState(rows, { initial = false } = {}) {
+    if (!onNotificationsRoute()) return;
+    const { record, create } = readUrlState();
+
+    if (create) {
+      if (!createOpenRef.current) {
+        setForm(EMPTY_FORM);
+        setRecipientPicked(false);
+        setRecipientLabel('');
+      }
+      setCreateOpen(true);
+      setError('');
+      return;
+    }
+
+    if (!record) {
+      if (!initial) {
+        setCreateOpen(false);
+        setError('');
+      }
+      return;
+    }
+
+    setCreateOpen(false);
+    if (applyingUrlRef.current) return;
+
+    const queue = Array.isArray(rows) && rows.length > 0 ? rows : notificationsRef.current;
+    const known = queue.find(
+      (notification) => notification.id === record || notification.notificationNumber === record
+    );
+    if (known) {
+      setSelectedId(known.id);
+      setActiveTab('overview');
+      setError('');
+      return;
+    }
+
+    applyingUrlRef.current = true;
+    try {
+      let notificationId = UUID_PATTERN.test(record) ? record : null;
+      if (!notificationId) notificationId = await discoverNotificationId(record);
+      if (notificationId) {
+        setSelectedId(notificationId);
+        setActiveTab('overview');
+        setError('');
+      } else {
+        setError(`Notification “${record}” was not found in the notification queue.`);
+        setSelectedId((current) => current || notificationsRef.current[0]?.id || null);
+      }
+    } catch (cause) {
+      setError(`Notification ${record} could not be loaded: ${errorText(cause)}`);
+      setSelectedId((current) => current || notificationsRef.current[0]?.id || null);
+    } finally {
+      applyingUrlRef.current = false;
+    }
+  }
+
   useEffect(() => {
+    notificationsRef.current = notifications;
+  }, [notifications]);
+
+  useEffect(() => {
+    createOpenRef.current = createOpen;
+  }, [createOpen]);
+
+  useEffect(() => {
+    let alive = true;
+    const onPopState = () => {
+      applyUrlState(notificationsRef.current);
+    };
+    window.addEventListener('popstate', onPopState);
+
+    if (onNotificationsRoute() && readUrlState().create) {
+      setForm(EMPTY_FORM);
+      setRecipientPicked(false);
+      setRecipientLabel('');
+      setCreateOpen(true);
+    }
+
     load()
-      .catch((cause) => setError(errorText(cause)))
-      .finally(() => setLoading(false));
+      .then((rows) => {
+        if (!alive) return;
+        setLoading(false);
+        applyUrlState(rows, { initial: true });
+      })
+      .catch((cause) => {
+        if (!alive) return;
+        setLoading(false);
+        setError(errorText(cause));
+      });
+
+    return () => {
+      alive = false;
+      window.removeEventListener('popstate', onPopState);
+    };
   }, []);
 
   useEffect(() => {
@@ -169,7 +377,10 @@ export default function App() {
     }
     api(`/api/v1/notifications/${selectedId}`)
       .then((notification) => {
-        if (alive) setDetail(notification);
+        if (alive) {
+          setDetail(notification);
+          rememberNotification(notification);
+        }
       })
       .catch((cause) => {
         if (alive) setError(errorText(cause));
@@ -185,14 +396,20 @@ export default function App() {
       if (event.key === 'Escape' && !creating) {
         setCreateOpen(false);
         setError('');
+        writeUrl({ record: selectedId || '' });
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [createOpen, creating]);
+  }, [createOpen, creating, selectedId]);
 
   function update(field, value) {
     setForm((current) => ({ ...current, [field]: value }));
+  }
+
+  function openParty(partyId) {
+    if (!partyId) return;
+    navigate(recordHref('party', partyId));
   }
 
   function selectNotification(notification) {
@@ -200,6 +417,7 @@ export default function App() {
     setSelectedId(notification.id);
     setError('');
     setNotice('');
+    writeUrl({ record: notification.id });
   }
 
   async function refresh() {
@@ -215,21 +433,29 @@ export default function App() {
 
   function openCreate() {
     setForm(EMPTY_FORM);
+    setRecipientPicked(false);
+    setRecipientLabel('');
     setError('');
     setNotice('');
     setCreateOpen(true);
+    writeUrl({ record: selectedId || '', create: true });
   }
 
   function closeCreate() {
     if (creating) return;
     setCreateOpen(false);
     setError('');
+    writeUrl({ record: selectedId || '' });
   }
 
   async function submit(event) {
     event.preventDefault();
     setError('');
     setNotice('');
+    if (!form.recipientPartyId) {
+      setError('Select a recipient party before creating the notification.');
+      return;
+    }
     setCreating(true);
     const payload = {
       notificationType: form.notificationType,
@@ -257,7 +483,11 @@ export default function App() {
       if (created?.id) {
         setSelectedId(created.id);
         setDetail(created);
+        rememberNotification(created);
         setActiveTab('overview');
+        writeUrl({ record: created.id });
+      } else {
+        writeUrl({ record: selectedId || '' });
       }
     } catch (cause) {
       setError(errorText(cause));
@@ -289,6 +519,11 @@ export default function App() {
   }
 
   function renderTab(notification) {
+    const recipientId = notification.recipientPartyId;
+    const recipientText = recipientId
+      ? recipientLabelFor(notification) || shortId(recipientId)
+      : '—';
+
     if (activeTab === 'delivery') {
       return (
         <section
@@ -319,7 +554,19 @@ export default function App() {
                       {notification.status}
                     </span>
                   </td>
-                  <td className="eia-mono">{shortId(notification.recipientPartyId)}</td>
+                  <td className="eia-mono">
+                    {recipientId ? (
+                      <a
+                        href={recordHref('party', recipientId)}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          openParty(recipientId);
+                        }}
+                      >
+                        {recipientText}
+                      </a>
+                    ) : '—'}
+                  </td>
                   <td>{formatInstant(notification.scheduledAt)}</td>
                   <td>{formatInstant(notification.sentAt)}</td>
                 </tr>
@@ -399,7 +646,20 @@ export default function App() {
               <dt>Type</dt>
               <dd>{humanize(notification.notificationType)}</dd>
               <dt>Recipient party</dt>
-              <dd className="eia-mono">{notification.recipientPartyId || '—'}</dd>
+              <dd className="eia-mono">
+                {recipientId ? (
+                  <a
+                    href={recordHref('party', recipientId)}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      openParty(recipientId);
+                    }}
+                    data-testid="overview-recipient-link"
+                  >
+                    {recipientText}
+                  </a>
+                ) : '—'}
+              </dd>
               <dt>Channel</dt>
               <dd>{notification.channel || '—'}</dd>
               <dt>Status</dt>
@@ -419,6 +679,54 @@ export default function App() {
             </p>
           </section>
         </div>
+
+        <section
+          className="eia-context-panel"
+          aria-label="Why this matters"
+          data-testid="why-this-matters"
+        >
+          <h4>Why this matters</h4>
+          <p>
+            A notification is a delivery artifact, not a business fact. The approved template,
+            channel, and status govern delivery — how and when the message is sent — and the
+            notification never changes the source record that triggered it. The source business
+            record is not exposed in this API slice, so this workbench cannot link to it or invent a
+            link.
+          </p>
+        </section>
+
+        <section
+          className="eia-card"
+          aria-label="Related records"
+          data-testid="related-records"
+          style={{ marginTop: 14 }}
+        >
+          <h3>Related records</h3>
+          <p className="eia-muted" style={{ marginTop: 4 }}>
+            The only related record this API slice exposes is the recipient party. The source
+            business record — the claim, policy, or payment that caused the notification — is not
+            exposed, so it is deliberately absent instead of being guessed.
+          </p>
+          {recipientId ? (
+            <div className="eia-related-list">
+              <a
+                className="eia-related-record"
+                href={recordHref('party', recipientId)}
+                onClick={(event) => {
+                  event.preventDefault();
+                  openParty(recipientId);
+                }}
+                data-testid="related-recipient-party-link"
+              >
+                Recipient · <b>{recipientText}</b>
+              </a>
+            </div>
+          ) : (
+            <div className="eia-empty" data-testid="related-records-empty" style={{ marginTop: 10 }}>
+              No related records are available for this notification.
+            </div>
+          )}
+        </section>
       </section>
     );
   }
@@ -448,40 +756,81 @@ export default function App() {
       {error && !createOpen && <p role="alert" style={{ margin: '0 0 12px' }}>{error}</p>}
 
       <div className="eia-record-layout">
-        <aside className="eia-record-list" aria-label="Notification queue">
-          <div className="eia-record-list-head">
-            <strong>Notification queue</strong>
-            <span className="eia-muted">{loading ? '…' : notifications.length}</span>
-          </div>
-          {notifications.map((notification) => {
-            const isSelected = notification.id === selectedId;
-            return (
-              <button
-                key={notification.id}
-                type="button"
-                className={isSelected ? 'selected' : ''}
-                aria-current={isSelected ? 'true' : undefined}
-                aria-label={`Open record ${notification.notificationNumber}`}
-                onClick={() => selectNotification(notification)}
-              >
-                <span className="record-primary">{notification.notificationNumber}</span>
-                <span className="record-secondary">{notification.subject}</span>
-                <span className="record-secondary">
-                  To {shortId(notification.recipientPartyId)} · {notification.channel}
-                </span>
-                <span>
-                  <span className={`eia-pill ${statusTone(notification.status)}`}>
-                    {notification.status}
-                  </span>
-                </span>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0 }}>
+          <div
+            className="eia-queue-search"
+            role="search"
+            aria-label="Filter the notification queue"
+            style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+          >
+            <div className="eia-search-box" style={{ height: 38, flex: 1 }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
+                <path d="m20 20-3.4-3.4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+              <input
+                type="search"
+                value={queueFilter}
+                onChange={(event) => setQueueFilter(event.target.value)}
+                placeholder={QUEUE_FILTER_PLACEHOLDER}
+                aria-label="Filter notifications by number, subject, recipient, channel, or status"
+                autoComplete="off"
+                data-testid="notification-filter"
+              />
+            </div>
+            {queueFilter && (
+              <button type="button" className="eia-btn-ghost" onClick={() => setQueueFilter('')}>
+                Clear
               </button>
-            );
-          })}
-          {!loading && notifications.length === 0 && (
-            <div className="empty">No notifications yet. Use Create notification to open the first record.</div>
-          )}
-          {loading && <div className="empty">Loading notifications…</div>}
-        </aside>
+            )}
+          </div>
+
+          <aside className="eia-record-list" aria-label="Notification queue">
+            <div className="eia-record-list-head">
+              <strong>Notification queue</strong>
+              <span className="eia-muted" data-testid="queue-filter-count">
+                {loading
+                  ? '…'
+                  : queueFilter
+                    ? `${filteredNotifications.length} of ${notifications.length} notifications`
+                    : notifications.length}
+              </span>
+            </div>
+            {loading && <div className="empty">Loading notifications…</div>}
+            {!loading && notifications.length === 0 && (
+              <div className="empty">No notifications yet. Use Create notification to open the first record.</div>
+            )}
+            {!loading && notifications.length > 0 && filteredNotifications.length === 0 && (
+              <div className="empty" data-testid="queue-filter-empty">
+                No notifications match “{queueFilter.trim()}”. Clear the filter to see the full queue.
+              </div>
+            )}
+            {filteredNotifications.map((notification) => {
+              const isSelected = notification.id === selectedId;
+              return (
+                <button
+                  key={notification.id}
+                  type="button"
+                  className={isSelected ? 'selected' : ''}
+                  aria-current={isSelected ? 'true' : undefined}
+                  aria-label={`Open record ${notification.notificationNumber}`}
+                  onClick={() => selectNotification(notification)}
+                >
+                  <span className="record-primary">{notification.notificationNumber}</span>
+                  <span className="record-secondary">{notification.subject}</span>
+                  <span className="record-secondary">
+                    To {shortId(notification.recipientPartyId)} · {notification.channel}
+                  </span>
+                  <span>
+                    <span className={`eia-pill ${statusTone(notification.status)}`}>
+                      {notification.status}
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
+          </aside>
+        </div>
 
         <section className="eia-record-panel" aria-label="Notification record">
           {selected ? (
@@ -498,7 +847,19 @@ export default function App() {
                       {selected.status}
                     </span>
                     {' · '}Channel {selected.channel || '—'}
-                    {' · '}Recipient {shortId(selected.recipientPartyId)}
+                    {' · '}Recipient{' '}
+                    {selected.recipientPartyId ? (
+                      <a
+                        href={recordHref('party', selected.recipientPartyId)}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          openParty(selected.recipientPartyId);
+                        }}
+                        data-testid="record-recipient-link"
+                      >
+                        {recipientLabelFor(selected) || shortId(selected.recipientPartyId)}
+                      </a>
+                    ) : '—'}
                   </p>
                 </div>
                 <div className="eia-actions">
@@ -631,16 +992,68 @@ export default function App() {
                   ))}
                 </select>
               </Field>
-              <Field label="Recipient party ID" htmlFor="recipientPartyId">
-                <input
-                  id="recipientPartyId"
-                  value={form.recipientPartyId}
-                  onChange={(event) => update('recipientPartyId', event.target.value)}
-                  placeholder="Party UUID"
-                  required
-                  autoFocus
+              <div className="eia-field span-3">
+                <label>Recipient party</label>
+                <EntityPicker
+                  endpoint={PARTY_SEARCH_ENDPOINT}
+                  value={recipientPicked ? form.recipientPartyId : ''}
+                  valueLabel={recipientPicked ? recipientLabel : ''}
+                  onChange={(id, item) => {
+                    setForm((current) => ({ ...current, recipientPartyId: id || '' }));
+                    setRecipientPicked(Boolean(id));
+                    setRecipientLabel(item ? partyLabel(item) : '');
+                  }}
                 />
-              </Field>
+                <span className="eia-muted" style={{ fontSize: 10 }}>
+                  {recipientPicked
+                    ? 'Selected recipient party.'
+                    : 'The seeded demo recipient is used until a party is selected here.'}
+                </span>
+              </div>
+              {form.recipientPartyId && (
+                <section
+                  className="eia-card span-3"
+                  aria-label="Selected recipient party"
+                >
+                  <h3>Recipient party</h3>
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 10,
+                      flexWrap: 'wrap'
+                    }}
+                  >
+                    <div style={{ minWidth: 0 }}>
+                      <a
+                        href={recordHref('party', form.recipientPartyId)}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          openParty(form.recipientPartyId);
+                        }}
+                      >
+                        <b data-testid="recipient-party-label">
+                          {recipientPicked
+                            ? recipientLabel || shortId(form.recipientPartyId)
+                            : `Demo recipient ${shortId(DEMO_PARTY_ID)}`}
+                        </b>
+                      </a>
+                      <div className="eia-mono">{form.recipientPartyId}</div>
+                    </div>
+                    <a
+                      href={recordHref('party', form.recipientPartyId)}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        openParty(form.recipientPartyId);
+                      }}
+                      data-testid="recipient-party-link"
+                    >
+                      Open party record
+                    </a>
+                  </div>
+                </section>
+              )}
               <Field label="Subject" htmlFor="subject" className="span-2">
                 <input
                   id="subject"
