@@ -25,6 +25,10 @@ export const SOURCE_TYPES = [
 
 export const SOURCE_REFERENCE_MAX_LENGTH = 64;
 
+/** Query keys for the notification-list source filter. */
+export const SOURCE_FILTER_TYPE_PARAM = 'sourceType';
+export const SOURCE_FILTER_ID_PARAM = 'sourceId';
+
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const SOURCE_LABELS = {
@@ -55,6 +59,77 @@ export function sourceTypeLabel(value) {
   const normalized = normalizeSourceType(value);
   if (SOURCE_LABELS[normalized]) return SOURCE_LABELS[normalized];
   return value ? String(value).replace(/_/g, ' ') : '';
+}
+
+/**
+ * Reads the optional notification-list source filter from URL parameters.
+ *
+ * The API accepts only a complete classified pair. A partial or malformed
+ * pair resolves to no filter and a readable error, so the workbench never
+ * sends half a pair (which the API would reject as INVALID_SOURCE_FILTER).
+ */
+export function readSourceFilter(params) {
+  const rawType = String(params?.get?.(SOURCE_FILTER_TYPE_PARAM) || '').trim();
+  const rawId = String(params?.get?.(SOURCE_FILTER_ID_PARAM) || '').trim();
+
+  if (!rawType && !rawId) return { filter: null, error: '' };
+  if (!rawType) {
+    return {
+      filter: null,
+      error: 'Select a source type before filtering by a source record id.'
+    };
+  }
+
+  const sourceType = normalizeSourceType(rawType);
+  if (!sourceType) {
+    return {
+      filter: null,
+      error: `Source type '${rawType}' is not one of: ${SOURCE_TYPES.join(', ')}.`
+    };
+  }
+  if (!rawId) {
+    return {
+      filter: null,
+      error: `Enter the source record id for the ${sourceTypeLabel(sourceType)} source.`
+    };
+  }
+  if (!UUID_PATTERN.test(rawId)) {
+    return { filter: null, error: 'Source record id must be a UUID.' };
+  }
+
+  return { filter: { sourceType, sourceId: rawId }, error: '' };
+}
+
+/** Builds the queue endpoint for a source filter; both halves are required. */
+export function sourceFilterEndpoint(filter) {
+  if (!filter?.sourceType || !filter?.sourceId) return '/api/v1/notifications';
+  const params = new URLSearchParams();
+  params.set(SOURCE_FILTER_TYPE_PARAM, filter.sourceType);
+  params.set(SOURCE_FILTER_ID_PARAM, filter.sourceId);
+  return `/api/v1/notifications?${params.toString()}`;
+}
+
+/** True when a notification carries the exact source pair being filtered. */
+export function matchesSourceFilter(notification, filter) {
+  if (!filter?.sourceType || !filter?.sourceId) return false;
+  return (
+    normalizeSourceType(notification?.sourceType) === filter.sourceType
+    && String(notification?.sourceId || '').trim().toLowerCase()
+      === String(filter.sourceId).trim().toLowerCase()
+  );
+}
+
+/**
+ * Human reference for the source filter, resolved from the filtered queue.
+ * The API filter is type/id only, so a reference is only available when a
+ * returned notification carries it; the caller falls back to the short id.
+ */
+export function sourceFilterReference(notifications, filter) {
+  if (!filter?.sourceType || !filter?.sourceId) return '';
+  const row = (Array.isArray(notifications) ? notifications : []).find(
+    (notification) => matchesSourceFilter(notification, filter)
+  );
+  return String(row?.sourceReference || '').trim();
 }
 
 /** True when the notification carries any part of a source link. */

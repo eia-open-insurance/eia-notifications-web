@@ -45,6 +45,13 @@ No business logic; all actions go through the domain service.
 - URL record discovery: `?record={id|number}` opens a notification, `?new=1` opens the create dialog,
   and `popstate` keeps the workbench in step with shell navigation. A notification number missing from
   the loaded queue is resolved through `/api/v1/notifications/search`.
+- Source-scoped queue: `sourceType` + `sourceId` on the listing URL (for example the
+  `/notifications?sourceType=POLICY&sourceId=<policyId>` hand-off used by other verticals' **View
+  all** links) become `GET /api/v1/notifications?sourceType=…&sourceId=…`. A banner/chip shows the
+  source type and the human reference resolved from the returned notifications (short id fallback),
+  record selection keeps the pair in the URL, and **Clear filter** removes the pair and reloads the
+  unfiltered queue. A partial, unknown, or malformed pair is reported and never sent as half a pair;
+  `?new=1` still treats the same parameters as create prefill and leaves the queue unfiltered.
 - Prefilled create links: `?new=1` also accepts `notificationType`, `channel`, `recipientPartyId`,
   `subject`, `body`, `templateCode`, `sourceType`, `sourceId`, and `sourceReference`; invalid enum
   values and non-UUID recipients fall back to the defaults, `?record=` ignores them, and an edited or
@@ -68,7 +75,9 @@ No business logic; all actions go through the domain service.
 - Playwright tests mock the API and cover list + detail, create, send, problem errors, URL discovery,
   create prefill (full, partial, invalid recipient, plain `new=1`, and no overwrite after an edit),
   queue filtering, the recipient picker payload, source links for every classified type, `OTHER` as
-  text, source prefill/create/validation, and the delivery context/cross-links.
+  text, source prefill/create/validation, the source-scoped queue (filtered request, banner and
+  reference, clear/reload, record selection and popstate, partial/invalid pair rejection, short-id
+  fallback, and `new=1` staying unfiltered), and the delivery context/cross-links.
 - Playwright activity coverage for the aggregate path/limit/tenant header, newest-first order,
   payload facts, empty and 503 states, explicit refresh, and selection refetch.
 - Top-level **Templates** section backed by `GET /api/v1/notifications/templates`: a registry table

@@ -10,8 +10,12 @@ import {
   SOURCE_REFERENCE_MAX_LENGTH,
   SOURCE_TYPES,
   hasSource,
+  matchesSourceFilter,
   normalizeSourceType,
+  readSourceFilter,
   sourceDisplayValue,
+  sourceFilterEndpoint,
+  sourceFilterReference,
   sourceHref,
   sourcePayload,
   sourceTypeLabel,
@@ -124,14 +128,32 @@ function readPrefillSeed(params) {
 }
 
 function readUrlState() {
-  if (typeof window === 'undefined') return { record: '', create: false, prefill: null };
+  if (typeof window === 'undefined') {
+    return { record: '', create: false, prefill: null, filter: null, filterError: '' };
+  }
   const params = new URLSearchParams(window.location.search);
   const create = params.get('new') === '1';
+  // A create URL reuses sourceType/sourceId as draft prefill, so it never
+  // filters the queue. On the listing route the pair is a server-side filter.
+  const filterState = create ? { filter: null, error: '' } : readSourceFilter(params);
   return {
     record: params.get('record') || '',
     create,
-    prefill: create ? readPrefillSeed(params) : null
+    prefill: create ? readPrefillSeed(params) : null,
+    filter: filterState.filter,
+    filterError: filterState.error
   };
+}
+
+/**
+ * Initial list source filter. `?new=1` consumes the same pair as create
+ * prefill, so the queue only honours the filter when no create draft is open.
+ */
+function readUrlSourceFilter() {
+  if (typeof window === 'undefined') return { filter: null, error: '' };
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('new') === '1') return { filter: null, error: '' };
+  return readSourceFilter(params);
 }
 
 /**
@@ -146,14 +168,25 @@ function onNotificationsRoute() {
 }
 
 /**
- * Keeps the address bar in step with the selected notification and the
- * create dialog. `notify: false` leaves routing to the shell; the workbench
- * already applied the same state locally.
+ * Keeps the address bar in step with the selected notification, the create
+ * dialog, and the active source filter. A create URL never carries the filter
+ * parameters because `new=1` reads that pair as draft prefill. `notify: false`
+ * leaves routing to the shell; the workbench already applied the same state
+ * locally.
  */
-function writeUrl({ record = '', create = false, replace = false } = {}) {
+function writeUrl({ record = '', create = false, filter = null, replace = false } = {}) {
   if (typeof window === 'undefined' || !onNotificationsRoute()) return;
-  const base = recordHref(window.location.pathname || '/', record);
-  const target = create ? `${base}${record ? '&' : '?'}new=1` : base;
+  const path = window.location.pathname || '/';
+  const params = new URLSearchParams();
+  if (record) params.set('record', record);
+  if (create) {
+    params.set('new', '1');
+  } else if (filter?.sourceType && filter?.sourceId) {
+    params.set('sourceType', filter.sourceType);
+    params.set('sourceId', filter.sourceId);
+  }
+  const query = params.toString();
+  const target = query ? `${path}?${query}` : path;
   if (target === `${window.location.pathname}${window.location.search}`) return;
   navigate(target, { replace, notify: false });
 }
@@ -230,6 +263,8 @@ export default function App() {
   const [sending, setSending] = useState(false);
   const [detailNonce, setDetailNonce] = useState(0);
   const [queueFilter, setQueueFilter] = useState('');
+  const [sourceFilter, setSourceFilter] = useState(() => readUrlSourceFilter().filter);
+  const [sourceFilterError, setSourceFilterError] = useState(() => readUrlSourceFilter().error);
   const [recipientPicked, setRecipientPicked] = useState(false);
   const [recipientLabel, setRecipientLabel] = useState('');
   const [recipientParties, setRecipientParties] = useState({});
@@ -240,10 +275,14 @@ export default function App() {
   const createOpenRef = useRef(false);
   const applyingUrlRef = useRef(false);
   const activityRequestRef = useRef(0);
+  const sourceFilterRef = useRef(sourceFilter);
 
   const selectedRow = notifications.find((notification) => notification.id === selectedId) || null;
   const selected = detail && detail.id === selectedId ? detail : selectedRow;
   const filteredNotifications = filterNotifications(notifications, queueFilter);
+  const sourceFilterValue = sourceFilter
+    ? sourceFilterReference(notifications, sourceFilter)
+    : '';
   // Never show one notification's events under another notification's header
   // while a selection change is still in flight.
   const activityView = !selected
@@ -258,8 +297,13 @@ export default function App() {
       || (notification.recipientPartyId === form.recipientPartyId ? recipientLabel : '');
   }
 
-  async function load(preferredId) {
-    const data = await api('/api/v1/notifications');
+  /**
+   * Loads the queue, narrowed by the source pair when one is active. The
+   * filter is passed explicitly whenever the URL is the source of truth so a
+   * stale render closure cannot send the previous pair.
+   */
+  async function load(preferredId, filter = sourceFilter) {
+    const data = await api(sourceFilterEndpoint(filter));
     const rows = Array.isArray(data) ? data : [];
     notificationsRef.current = rows;
     setNotifications(rows);
@@ -393,9 +437,44 @@ export default function App() {
   }, [createOpen]);
 
   useEffect(() => {
+    sourceFilterRef.current = sourceFilter;
+  }, [sourceFilter]);
+
+  useEffect(() => {
     let alive = true;
+    /**
+     * A popstate can change both the record and the source scope. When the
+     * scoped pair changed, reload from the API with the URL's pair; otherwise
+     * the already-loaded queue is enough for record selection.
+     */
     const onPopState = () => {
-      applyUrlState(notificationsRef.current);
+      if (!onNotificationsRoute()) return;
+      const urlState = readUrlState();
+      setSourceFilterError(urlState.filterError);
+      const current = sourceFilterRef.current;
+      const changed = (urlState.filter?.sourceType || '') !== (current?.sourceType || '')
+        || (urlState.filter?.sourceId || '') !== (current?.sourceId || '');
+      if (!changed) {
+        applyUrlState(notificationsRef.current);
+        return;
+      }
+
+      sourceFilterRef.current = urlState.filter;
+      setSourceFilter(urlState.filter);
+      setError('');
+      setNotice('');
+      setLoading(true);
+      load(undefined, urlState.filter)
+        .then((rows) => {
+          if (!alive) return;
+          setLoading(false);
+          applyUrlState(rows);
+        })
+        .catch((cause) => {
+          if (!alive) return;
+          setLoading(false);
+          setError(errorText(cause));
+        });
     };
     window.addEventListener('popstate', onPopState);
 
@@ -525,12 +604,12 @@ export default function App() {
       if (event.key === 'Escape' && !creating) {
         setCreateOpen(false);
         setError('');
-        writeUrl({ record: selectedId || '' });
+        writeUrl({ record: selectedId || '', filter: sourceFilter });
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [createOpen, creating, selectedId]);
+  }, [createOpen, creating, selectedId, sourceFilter]);
 
   function update(field, value) {
     setForm((current) => ({ ...current, [field]: value }));
@@ -627,7 +706,35 @@ export default function App() {
     setSelectedId(notification.id);
     setError('');
     setNotice('');
-    writeUrl({ record: notification.id });
+    writeUrl({ record: notification.id, filter: sourceFilter });
+  }
+
+  /**
+   * Removes the source pair from the URL and reloads the unfiltered queue.
+   * The selected record stays selected; only the source scope is dropped.
+   */
+  async function clearSourceFilter() {
+    setSourceFilter(null);
+    sourceFilterRef.current = null;
+    setSourceFilterError('');
+    setError('');
+    setNotice('');
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      params.delete('sourceType');
+      params.delete('sourceId');
+      const path = window.location.pathname || '/';
+      const query = params.toString();
+      navigate(query ? `${path}?${query}` : path, { notify: false });
+    }
+    setLoading(true);
+    try {
+      await load(selectedId, null);
+    } catch (cause) {
+      setError(errorText(cause));
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function refresh() {
@@ -656,7 +763,7 @@ export default function App() {
     if (creating) return;
     setCreateOpen(false);
     setError('');
-    writeUrl({ record: selectedId || '' });
+    writeUrl({ record: selectedId || '', filter: sourceFilter });
   }
 
   async function submit(event) {
@@ -697,15 +804,25 @@ export default function App() {
           ? `Notification ${created.notificationNumber} created.`
           : 'Notification created.'
       );
-      await load(created?.id);
+      // A created notification that is outside the active source scope cannot
+      // stay in a filtered queue, so clear the scope and show the full list.
+      const nextFilter = sourceFilter && matchesSourceFilter(created, sourceFilter)
+        ? sourceFilter
+        : null;
+      if (nextFilter !== sourceFilter) {
+        setSourceFilter(nextFilter);
+        sourceFilterRef.current = nextFilter;
+        setSourceFilterError('');
+      }
+      await load(created?.id, nextFilter);
       if (created?.id) {
         setSelectedId(created.id);
         setDetail(created);
         rememberNotification(created);
         setActiveTab('overview');
-        writeUrl({ record: created.id });
+        writeUrl({ record: created.id, filter: nextFilter });
       } else {
-        writeUrl({ record: selectedId || '' });
+        writeUrl({ record: selectedId || '', filter: nextFilter });
       }
     } catch (cause) {
       setError(errorText(cause));
@@ -1068,6 +1185,47 @@ export default function App() {
 
           <div className="eia-record-layout">
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0 }}>
+              {sourceFilterError && (
+                <p
+                  className="eia-source-filter-error"
+                  role="alert"
+                  data-testid="source-filter-error"
+                >
+                  {sourceFilterError}
+                </p>
+              )}
+              {sourceFilter && (
+                <div
+                  className="eia-source-filter"
+                  role="group"
+                  data-testid="source-filter-banner"
+                  aria-label="Source filter"
+                >
+                  <span className="eia-pill blue">Source filter</span>
+                  <span className="eia-source-filter-text">
+                    Showing notifications linked to{' '}
+                    <b data-testid="source-filter-type">
+                      {sourceTypeLabel(sourceFilter.sourceType)}
+                    </b>
+                    {' · '}
+                    <span
+                      className="eia-mono"
+                      data-testid="source-filter-reference"
+                      title={sourceFilter.sourceId}
+                    >
+                      {sourceFilterValue || shortId(sourceFilter.sourceId)}
+                    </span>
+                  </span>
+                  <button
+                    type="button"
+                    className="eia-btn-ghost"
+                    onClick={clearSourceFilter}
+                    data-testid="source-filter-clear"
+                  >
+                    Clear filter
+                  </button>
+                </div>
+              )}
               <div
                 className="eia-queue-search"
                 role="search"
@@ -1108,7 +1266,13 @@ export default function App() {
                   </span>
                 </div>
                 {loading && <div className="empty">Loading notifications…</div>}
-                {!loading && notifications.length === 0 && (
+                {!loading && notifications.length === 0 && sourceFilter && (
+                  <div className="empty" data-testid="source-filter-empty">
+                    No notifications are linked to this source. Clear the filter to see the full
+                    queue.
+                  </div>
+                )}
+                {!loading && notifications.length === 0 && !sourceFilter && (
                   <div className="empty">No notifications yet. Use Create notification to open the first record.</div>
                 )}
                 {!loading && notifications.length > 0 && filteredNotifications.length === 0 && (

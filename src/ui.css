@@ -1004,3 +1004,44 @@ main [role="status"] {
   margin: 6px 0 0 !important;
   font-size: 10px !important;
 }
+
+/* Source-scoped notification queue */
+.eia-source-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  background: #eef5fb;
+  border: 1px solid #cfe0ef;
+  border-left: 3px solid var(--eia-blue);
+  border-radius: 6px;
+  font-size: 12px;
+  color: #2b4a66;
+}
+
+.eia-source-filter-text {
+  flex: 1 1 150px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.eia-source-filter-text b { color: var(--eia-navy); }
+
+.eia-source-filter .eia-pill { flex: 0 0 auto; }
+
+.eia-source-filter button {
+  padding: 4px 9px !important;
+  font-size: 11px !important;
+}
+
+.eia-source-filter-error {
+  margin: 0;
+  padding: 8px 10px;
+  background: #fde8e8;
+  border: 1px solid #f0c2c2;
+  border-left: 3px solid var(--eia-red);
+  border-radius: 6px;
+  color: var(--eia-red);
+  font-size: 12px;
+}

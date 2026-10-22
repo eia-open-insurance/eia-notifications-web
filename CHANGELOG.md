@@ -78,3 +78,12 @@ The format is based on Keep a Changelog and the project uses Semantic Versioning
   ordering and source marker, duplicate 409 and validation errors contained in the dialog, approver
   UUID validation, approve, retire, contained 409 with reload, and a contained registry load
   failure.
+- Source-scoped notification queue: `/notifications?sourceType=…&sourceId=…` (and the root route)
+  loads `GET /api/v1/notifications?sourceType=…&sourceId=…`. A filter banner/chip shows the source
+  type plus the human reference resolved from the filtered rows (short id fallback), selecting a
+  record keeps the pair in the URL, and **Clear filter** removes only the pair and reloads the
+  unfiltered queue. A partial, unknown, or malformed pair shows an error and loads the queue without
+  sending half a pair; `?new=1` keeps the parameters as create prefill and never filters the queue.
+  Playwright coverage for the `/notifications` view-all hand-off, the filtered request and banner,
+  clear/reload, record selection and back navigation, partial/invalid pairs, the short-id fallback,
+  and the `?new=1` non-filter path.

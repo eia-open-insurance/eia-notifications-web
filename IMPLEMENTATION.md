@@ -11,6 +11,7 @@ workbench holds no business logic. Every action calls the domain service.
 |---|---|
 | Notification queue | Lists notifications with number, subject, recipient, channel, and status; selecting one opens it and pushes `?record={id}` |
 | Queue filter | Prominent client-side filter over number, subject, recipient party, channel, and status, with a result count, empty state, and Clear action |
+| Source filter | URL `sourceType` + `sourceId` scope the queue through `GET /api/v1/notifications?sourceType=…&sourceId=…`, with a banner/chip, resolved reference, and a **Clear filter** action that reloads unfiltered |
 | Create notification | Primary header action (`?new=1`); opens a compact dialog with a predictive recipient `EntityPicker` backed by `/api/v1/parties/search` and an optional source-record block (type, id, reference). Supports URL prefill for type, channel, recipient, subject, body, template, and source |
 | Templates | Top-level section (switch beside Notifications) reading `GET /api/v1/notifications/templates`: code, version, locale, channel, status, approval, and updated columns with a client-side filter, count, and empty state. The approval-gate panel states that only ACTIVE approved templates can send |
 | Create template | Dialog with code, version, locale, optional channel, and body; `POST /api/v1/notifications/templates` creates a DRAFT and the registry reloads |
@@ -54,8 +55,8 @@ a closed dialog, so an already-open, edited draft is never overwritten. Opening
 create normally always resets the form to the defaults and writes a `new=1`
 URL without prefill parameters. Closing the dialog returns to `?record=`.
 
-The queue filter is client-side over the loaded list; it does not call the search
-endpoint. The create form resolves the recipient through
+The queue filter is client-side over the loaded (optionally source-scoped) list; it does not call the
+search endpoint. The create form resolves the recipient through
 `/api/v1/parties/search?q={term}&limit=8`, displays the party number/name label,
 and links to `/party?record={id}`. The Overview and Delivery tabs link the
 recipient party at the same route.
@@ -86,6 +87,27 @@ are accepted from `?new=1` prefill.
 
 Errors keep the structured `CODE: message` format from the API problem body.
 Create, send, and the problem-error paths are unchanged.
+
+## Source-filtered queue
+
+The listing URL accepts a `sourceType`/`sourceId` pair as a server-side filter, so a **View all**
+hand-off from another vertical can use `/notifications?sourceType=POLICY&sourceId={id}` (or the
+dev-server root). On load, and on a `popstate` that changes the pair, the queue calls
+`GET /api/v1/notifications?sourceType=…&sourceId=…`; with no pair it calls the unfiltered list.
+
+`src/source.js` owns parsing: the type is normalized against the closed set and the id must be a
+UUID. A partial pair, an unknown type, or a malformed id resolves to no filter and a visible error,
+so the workbench never sends half a pair (the API would reject it as `INVALID_SOURCE_FILTER`). The
+unfiltered queue still loads so the screen remains usable.
+
+A valid pair renders a banner/chip above the queue: the source type label plus the human
+`sourceReference` found on a returned notification, falling back to the short source id (the full
+id is the chip title). The client-side queue filter narrows within the scoped result. Selecting a
+record writes `?record=…&sourceType=…&sourceId=…`, so refresh and back preserve the scope;
+**Clear filter** deletes only those two parameters, keeps the selected record, and reloads the
+unfiltered queue. `?new=1` is deliberately exempt: source parameters there remain create-draft
+prefill and the queue loads unfiltered. Creating a notification outside the active scope clears the
+scope so the new record is visible.
 
 ## Template registry and approval gate
 
@@ -143,7 +165,12 @@ and label/link, and the delivery context/cross-links. `tests/source.spec.js`
 covers the source link for every classified type (href and real navigation),
 `OTHER` and no-reference text fallbacks, source prefill, source create payload,
 the type/id pair validation and UUID check, and omission of source fields for a
-no-source draft. `tests/activity.spec.js`
+no-source draft. `tests/source-filter.spec.js` covers the
+`/notifications?sourceType=…&sourceId=…` view-all hand-off, the filtered list
+request and banner reference, clear/reload, record selection and back
+navigation, partial/unknown/malformed pair rejection without a half-pair
+request, the short-id fallback, and `?new=1` staying a create prefill instead
+of a queue filter. `tests/activity.spec.js`
 covers the event-timeline path/limit/tenant header, newest-first rendering,
 payload facts, the empty state, a contained 503, explicit refresh, and refetch
 when another notification is selected. `tests/templates.spec.js` covers the
