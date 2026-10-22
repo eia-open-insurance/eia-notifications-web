@@ -31,6 +31,12 @@ The format is based on Keep a Changelog and the project uses Semantic Versioning
 - Playwright source coverage for every classified link (href and navigation), `OTHER` and
   no-reference text fallbacks, source prefill, source create payload, type/id pair validation, the
   UUID check, and omission of source fields for a no-source draft.
+- Expanded notification source linkage to the backend's full closed set: `CESSION`, `RETROCESSION`,
+  `DOCUMENT`, and `PARTY` are selectable in the create dialog and link to `/cession`,
+  `/retrocession`, `/document`, and `/party` with `?record={sourceId}`. Their labels participate in
+  source-filter parsing and create validation. Playwright coverage exercises every classified link
+  (including the four new types), the expanded create options and payload, and a `CESSION` queue
+  filter.
 - Shared canonical `ui.css` and copied `EntityPicker.jsx`; shell-aware `navigate`/`recordHref`
   helpers for cross-vertical links.
 - Playwright discovery coverage for URL state, queue filtering, the party picker payload, and the

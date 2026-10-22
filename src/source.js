@@ -4,9 +4,10 @@
  * A notification is delivered because a business record changed. The
  * notification carries a flat `sourceType`/`sourceId`/`sourceReference` link
  * to that record so the operator can trace the message back to the claim,
- * policy, contract, or payment that caused it. `sourceType` decides which
- * remote owns the record; `sourceReference` is the human label and never
- * replaces `sourceId` for a classified source.
+ * policy, contract, payment, cession, retrocession, document, or party that
+ * caused it. `sourceType` decides which remote owns the record;
+ * `sourceReference` is the human label and never replaces `sourceId` for a
+ * classified source.
  *
  * The type/id pair is all-or-nothing: a source is either classified by both a
  * type and a record id, or omitted. A reference may stand alone because the
@@ -20,6 +21,10 @@ export const SOURCE_TYPES = [
   'POLICY',
   'CONTRACT',
   'PAYMENT',
+  'CESSION',
+  'RETROCESSION',
+  'DOCUMENT',
+  'PARTY',
   'OTHER'
 ];
 
@@ -37,6 +42,10 @@ const SOURCE_LABELS = {
   POLICY: 'Policy',
   CONTRACT: 'Contract',
   PAYMENT: 'Payment',
+  CESSION: 'Cession',
+  RETROCESSION: 'Retrocession',
+  DOCUMENT: 'Document',
+  PARTY: 'Party',
   OTHER: 'Other source'
 };
 
@@ -45,7 +54,11 @@ const SOURCE_ROUTES = {
   ASSUMED_CLAIM: 'assumed-claims',
   POLICY: 'policy',
   CONTRACT: 'contract',
-  PAYMENT: 'payment'
+  PAYMENT: 'payment',
+  CESSION: 'cession',
+  RETROCESSION: 'retrocession',
+  DOCUMENT: 'document',
+  PARTY: 'party'
 };
 
 /** Uppercases a known source type; blank and unknown values resolve to ''. */

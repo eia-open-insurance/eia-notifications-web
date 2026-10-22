@@ -67,8 +67,11 @@ A notification may carry a flat `sourceType`/`sourceId`/`sourceReference` link
 to the business record that caused it. `src/source.js` owns the mapping:
 `DIRECT_CLAIM` links to `/direct-claims?record={sourceId}`, `ASSUMED_CLAIM` to
 `/assumed-claims?record={sourceId}`, `POLICY` to `/policy?record={sourceId}`,
-`CONTRACT` to `/contract?record={sourceId}`, and `PAYMENT` to
-`/payment?record={sourceId}`. `OTHER` has no owning remote and stays plain text.
+`CONTRACT` to `/contract?record={sourceId}`, `PAYMENT` to
+`/payment?record={sourceId}`, `CESSION` to `/cession?record={sourceId}`,
+`RETROCESSION` to `/retrocession?record={sourceId}`, `DOCUMENT` to
+`/document?record={sourceId}`, and `PARTY` to `/party?record={sourceId}`.
+`OTHER` has no owning remote and stays plain text.
 The human `sourceReference` is the link/text label when present; the short id is
 the fallback and the full id stays visible under a reference so it can be
 copied.

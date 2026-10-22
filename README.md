@@ -64,8 +64,10 @@ No business logic; all actions go through the domain service.
   the party number/name label and a `/party?record=` cross-link.
 - Overview recipient party cross-links, a source-record link, a "Why this matters" delivery context
   panel, and related records that link the source and the recipient. `DIRECT_CLAIM`, `ASSUMED_CLAIM`,
-  `POLICY`, `CONTRACT`, and `PAYMENT` sources open the owning remote with `?record={sourceId}`;
-  `OTHER` stays plain text. The human `sourceReference` is shown whenever the API supplies it.
+  `POLICY`, `CONTRACT`, `PAYMENT`, `CESSION`, `RETROCESSION`, `DOCUMENT`, and `PARTY` sources open
+  `/direct-claims`, `/assumed-claims`, `/policy`, `/contract`, `/payment`, `/cession`,
+  `/retrocession`, `/document`, and `/party` with `?record={sourceId}`; `OTHER` stays plain text. The
+  human `sourceReference` is shown whenever the API supplies it.
 - Activity tab reads `GET /api/v1/events/aggregate/{notificationId}?limit=50` with the tenant header
   and renders an event-derived, append-only timeline: timestamp, readable event name plus the raw
   type, inbox status, record version, and payload facts (channel, recipient party, type, status).

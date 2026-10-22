@@ -169,6 +169,12 @@ test('rejects a partial or malformed source filter without sending a half pair',
   );
   await expect(page.getByTestId('source-filter-banner')).toHaveCount(0);
 
+  await page.goto('/?sourceType=RETROCESSION');
+  await expect(page.getByTestId('source-filter-error')).toContainText(
+    'Enter the source record id for the Retrocession source.'
+  );
+  await expect(page.getByTestId('source-filter-banner')).toHaveCount(0);
+
   await page.goto(`/?sourceId=${uuid(202)}`);
   await expect(page.getByTestId('source-filter-error')).toContainText(
     'Select a source type before filtering by a source record id.'
@@ -189,6 +195,28 @@ test('rejects a partial or malformed source filter without sending a half pair',
   expect(
     state.listRequests.every((request) => !request.sourceType && !request.sourceId)
   ).toBe(true);
+});
+
+test('applies a source filter for a newly supported source type', async ({ page }) => {
+  const cessionId = uuid(205);
+  const row = notification({
+    id: uuid(5),
+    notificationNumber: 'NTF-2026-000000005',
+    subject: 'Cession confirmed',
+    sourceType: 'CESSION',
+    sourceId: cessionId,
+    sourceReference: 'CES-2026-0000001'
+  });
+  const state = await installNotificationMock(page, [row]);
+
+  // Lowercase proves the expanded type set is normalized before the request.
+  await page.goto(`/?sourceType=cession&sourceId=${cessionId}`);
+
+  const banner = page.getByTestId('source-filter-banner');
+  await expect(banner).toContainText('Cession');
+  await expect(banner).toContainText('CES-2026-0000001');
+  expect(state.listRequests).toHaveLength(1);
+  expect(state.listRequests[0]).toEqual({ sourceType: 'CESSION', sourceId: cessionId });
 });
 
 test('falls back to the short source id when the filtered queue has no reference', async ({ page }) => {

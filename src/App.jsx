@@ -1540,9 +1540,9 @@ export default function App() {
               >
                 <h3>Source record</h3>
                 <p className="eia-muted" style={{ margin: '4px 0 10px', fontSize: 11 }}>
-                  Optional. Link this notification to the claim, policy, contract, payment, or other
-                  record that caused it. A source type and record id go together; the reference is the
-                  human label.
+                  Optional. Link this notification to the claim, policy, contract, payment, cession,
+                  retrocession, document, party, or other record that caused it. A source type and
+                  record id go together; the reference is the human label.
                 </p>
                 <div className="eia-form-grid">
                   <Field label="Source type" htmlFor="sourceType">

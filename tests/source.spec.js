@@ -136,6 +136,34 @@ const CLASSIFIED_SOURCES = [
     label: 'Payment',
     reference: 'PAY-2026-0000001',
     index: 5
+  },
+  {
+    type: 'CESSION',
+    route: 'cession',
+    label: 'Cession',
+    reference: 'CES-2026-0000001',
+    index: 6
+  },
+  {
+    type: 'RETROCESSION',
+    route: 'retrocession',
+    label: 'Retrocession',
+    reference: 'RCS-2026-0000001',
+    index: 7
+  },
+  {
+    type: 'DOCUMENT',
+    route: 'document',
+    label: 'Document',
+    reference: 'DOC-2026-0000001',
+    index: 8
+  },
+  {
+    type: 'PARTY',
+    route: 'party',
+    label: 'Party',
+    reference: 'PTY-2026-0000001',
+    index: 9
   }
 ];
 
@@ -291,6 +319,48 @@ test('requires the source type and record id together before creating', async ({
     sourceType: 'POLICY',
     sourceId,
     sourceReference: 'POL-2026-0000009'
+  });
+});
+
+test('accepts the expanded source types in create validation and payload', async ({ page }) => {
+  const state = await installNotificationMock(page, [notification()]);
+  const sourceId = uuid(302);
+  const sourceReference = 'PTY-2026-0000002';
+
+  await page.goto('/?new=1');
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toBeVisible();
+
+  const typeSelect = dialog.getByLabel('Source type');
+  for (const type of ['CESSION', 'RETROCESSION', 'DOCUMENT', 'PARTY']) {
+    await expect(typeSelect.locator(`option[value="${type}"]`)).toHaveCount(1);
+  }
+
+  await dialog.getByLabel('Subject').fill('Party source notification');
+  await dialog.getByLabel('Body').fill('Generated from party PTY-2026-0000002.');
+
+  // A newly supported type carries its display label into pair validation.
+  await typeSelect.selectOption('CESSION');
+  await dialog.getByRole('button', { name: 'Create notification' }).click();
+  await expect(dialog.getByRole('alert')).toContainText(
+    'Enter the source record id for the Cession source.'
+  );
+  expect(state.createBody).toBeNull();
+
+  await typeSelect.selectOption('PARTY');
+  await dialog.getByLabel('Source record id').fill(sourceId);
+  await dialog.getByLabel('Source reference').fill(sourceReference);
+  await dialog.getByRole('button', { name: 'Create notification' }).click();
+
+  await expect(dialog).toBeHidden();
+  await expect(page.getByTestId('overview-source-link')).toHaveAttribute(
+    'href',
+    `/party?record=${sourceId}`
+  );
+  expect(state.createBody).toMatchObject({
+    sourceType: 'PARTY',
+    sourceId,
+    sourceReference
   });
 });
 
