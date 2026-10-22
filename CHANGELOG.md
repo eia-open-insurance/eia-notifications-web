@@ -36,3 +36,11 @@ The format is based on Keep a Changelog and the project uses Semantic Versioning
 - Playwright activity coverage for the aggregate path/limit/tenant header, newest-first
   ordering, payload summaries, the empty state, a contained 503, explicit refresh, and refetch
   when another notification is selected.
+- Prefilled create links: `?new=1` accepts optional `notificationType`, `channel`,
+  `recipientPartyId`, `subject`, `body`, and `templateCode` query parameters and seeds the create
+  dialog from them. A recipient that is not a UUID, or an unknown type or channel, falls back to
+  the form default; `?record=` links ignore prefill parameters. An edited draft is never reseeded
+  by a URL re-application, and opening create normally always starts from the defaults.
+  `DUNNING_NOTICE` is available in the notification type list.
+- Playwright prefill coverage for all six parameters, partial prefill, an invalid recipient UUID,
+  plain `?new=1`, edited/normal opens, and prefill parameters on a record link.

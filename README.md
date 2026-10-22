@@ -45,6 +45,10 @@ No business logic; all actions go through the domain service.
 - URL record discovery: `?record={id|number}` opens a notification, `?new=1` opens the create dialog,
   and `popstate` keeps the workbench in step with shell navigation. A notification number missing from
   the loaded queue is resolved through `/api/v1/notifications/search`.
+- Prefilled create links: `?new=1` also accepts `notificationType`, `channel`, `recipientPartyId`,
+  `subject`, `body`, and `templateCode`; invalid enum values and non-UUID recipients fall back to the
+  defaults, `?record=` ignores them, and an edited or normally opened draft is never overwritten.
+  `DUNNING_NOTICE` is available in the notification type list.
 - Prominent client-side queue filter over notification number, subject, recipient party, channel, and
   status, with a result count and Clear action.
 - Predictive recipient party selection in the create form, backed by `/api/v1/parties/search`, with
@@ -58,6 +62,7 @@ No business logic; all actions go through the domain service.
   and a 503 never blocks the notification record.
 - `@swc/core` is pinned to exactly `1.10.7`.
 - Playwright tests mock the API and cover list + detail, create, send, problem errors, URL discovery,
+  create prefill (full, partial, invalid recipient, plain `new=1`, and no overwrite after an edit),
   queue filtering, the recipient picker payload, and the delivery context/cross-links.
 - Playwright activity coverage for the aggregate path/limit/tenant header, newest-first order,
   payload facts, empty and 503 states, explicit refresh, and selection refetch.

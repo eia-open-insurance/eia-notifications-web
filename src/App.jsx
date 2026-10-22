@@ -16,6 +16,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 const NOTIFICATION_TYPES = [
   'NEW_CLAIM_NOTICE',
   'CLAIM_ASSIGNED',
+  'DUNNING_NOTICE',
   'PAYMENT_AUTHORITY_REQUEST',
   'APPROVAL_REQUEST',
   'TASK_ASSIGNED',
@@ -102,10 +103,50 @@ function errorText(error) {
   return error.code ? `${error.code}: ${error.message}` : error.message;
 }
 
+/**
+ * Seeds a create draft from `?new=1` prefill parameters. Only values the form
+ * can represent are accepted: an unknown type or channel, and a recipient that
+ * is not a UUID, fall back to the form defaults so a stale or hand-written
+ * link still opens a valid draft. The prefill is opt-in per create open and is
+ * never applied to a record link or an already-edited form.
+ */
+function readPrefillSeed(params) {
+  const form = { ...EMPTY_FORM };
+  let recipientPicked = false;
+
+  const notificationType = (params.get('notificationType') || '').trim();
+  if (NOTIFICATION_TYPES.includes(notificationType)) form.notificationType = notificationType;
+
+  const channel = (params.get('channel') || '').trim();
+  if (CHANNELS.includes(channel)) form.channel = channel;
+
+  const recipientPartyId = (params.get('recipientPartyId') || '').trim();
+  if (UUID_PATTERN.test(recipientPartyId)) {
+    form.recipientPartyId = recipientPartyId;
+    recipientPicked = true;
+  }
+
+  const subject = (params.get('subject') || '').trim();
+  if (subject) form.subject = subject;
+
+  const body = (params.get('body') || '').trim();
+  if (body) form.body = body;
+
+  const templateCode = (params.get('templateCode') || '').trim();
+  if (templateCode) form.templateCode = templateCode;
+
+  return { form, recipientPicked };
+}
+
 function readUrlState() {
-  if (typeof window === 'undefined') return { record: '', create: false };
+  if (typeof window === 'undefined') return { record: '', create: false, prefill: null };
   const params = new URLSearchParams(window.location.search);
-  return { record: params.get('record') || '', create: params.get('new') === '1' };
+  const create = params.get('new') === '1';
+  return {
+    record: params.get('record') || '',
+    create,
+    prefill: create ? readPrefillSeed(params) : null
+  };
 }
 
 /**
@@ -286,20 +327,30 @@ export default function App() {
   }
 
   /**
+   * Seeds the create draft from URL prefill values, or resets it to the form
+   * defaults when there is no prefill. Only called when a create dialog is
+   * being opened, never while the user is editing one.
+   */
+  function seedCreateForm(seed) {
+    setForm(seed?.form ? { ...seed.form } : { ...EMPTY_FORM });
+    setRecipientPicked(Boolean(seed?.recipientPicked));
+    setRecipientLabel('');
+  }
+
+  /**
    * Applies ?record= and ?new=1. Links from global search open a record by id;
    * a notification number is resolved through the search projection so a
    * deep link does not silently fall back to the first queue row.
    */
   async function applyUrlState(rows, { initial = false } = {}) {
     if (!onNotificationsRoute()) return;
-    const { record, create } = readUrlState();
+    const { record, create, prefill } = readUrlState();
 
     if (create) {
-      if (!createOpenRef.current) {
-        setForm(EMPTY_FORM);
-        setRecipientPicked(false);
-        setRecipientLabel('');
-      }
+      // The initial mount already seeded and opened the dialog from the URL.
+      // Later re-applications only seed a closed dialog, so a popstate never
+      // overwrites a draft the user has already edited.
+      if (!initial && !createOpenRef.current) seedCreateForm(prefill);
       setCreateOpen(true);
       setError('');
       return;
@@ -362,11 +413,12 @@ export default function App() {
     };
     window.addEventListener('popstate', onPopState);
 
-    if (onNotificationsRoute() && readUrlState().create) {
-      setForm(EMPTY_FORM);
-      setRecipientPicked(false);
-      setRecipientLabel('');
-      setCreateOpen(true);
+    if (onNotificationsRoute()) {
+      const { create, prefill } = readUrlState();
+      if (create) {
+        seedCreateForm(prefill);
+        setCreateOpen(true);
+      }
     }
 
     load()
@@ -526,9 +578,7 @@ export default function App() {
   }
 
   function openCreate() {
-    setForm(EMPTY_FORM);
-    setRecipientPicked(false);
-    setRecipientLabel('');
+    seedCreateForm(null);
     setError('');
     setNotice('');
     setCreateOpen(true);

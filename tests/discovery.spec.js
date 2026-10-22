@@ -260,6 +260,176 @@ test('opens Create notification from ?new=1 and keeps the URL in step', async ({
   await expect(page).toHaveURL(/new=1/);
 });
 
+test('seeds every create field from ?new=1 prefill parameters', async ({ page }) => {
+  const state = await installNotificationMock(page, {
+    queue: [NOTIFICATION_A],
+    catalogue: [NOTIFICATION_A]
+  });
+
+  const subject = 'Dunning notice: premium overdue';
+  const body = 'Policy POL-2026-0000001 premium is 30 days overdue.';
+  const query = new URLSearchParams({
+    new: '1',
+    notificationType: 'DUNNING_NOTICE',
+    channel: 'EMAIL',
+    recipientPartyId: OTHER_PARTY_ID,
+    subject,
+    body,
+    templateCode: 'DUNNING_NOTICE_STANDARD'
+  });
+
+  await page.goto(`/?${query}`);
+
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByLabel('Notification type')).toHaveValue('DUNNING_NOTICE');
+  await expect(dialog.getByLabel('Channel')).toHaveValue('EMAIL');
+  await expect(dialog.getByLabel('Subject')).toHaveValue(subject);
+  await expect(dialog.getByLabel('Body')).toHaveValue(body);
+  await expect(dialog.getByLabel('Template code')).toHaveValue('DUNNING_NOTICE_STANDARD');
+  await expect(dialog.getByTestId('recipient-party-label')).toHaveText('0192f3a4…');
+  await expect(dialog.locator('.eia-mono')).toHaveText(OTHER_PARTY_ID);
+
+  await dialog.getByRole('button', { name: 'Create notification' }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole('status')).toContainText('NTF-2026-000000099 created.');
+
+  expect(state.createBody).toMatchObject({
+    notificationType: 'DUNNING_NOTICE',
+    channel: 'EMAIL',
+    recipientPartyId: OTHER_PARTY_ID,
+    subject,
+    body,
+    templateCode: 'DUNNING_NOTICE_STANDARD',
+    templateVersion: 1
+  });
+});
+
+test('keeps create defaults for fields a partial prefill omits', async ({ page }) => {
+  await installNotificationMock(page, {
+    queue: [NOTIFICATION_A],
+    catalogue: [NOTIFICATION_A]
+  });
+
+  const query = new URLSearchParams({
+    new: '1',
+    subject: 'Partial prefill subject',
+    templateCode: 'PARTIAL_TEMPLATE'
+  });
+  await page.goto(`/?${query}`);
+
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByLabel('Notification type')).toHaveValue('NEW_CLAIM_NOTICE');
+  await expect(dialog.getByLabel('Channel')).toHaveValue('IN_APP');
+  await expect(dialog.getByLabel('Subject')).toHaveValue('Partial prefill subject');
+  await expect(dialog.getByLabel('Body')).toHaveValue('');
+  await expect(dialog.getByLabel('Template code')).toHaveValue('PARTIAL_TEMPLATE');
+  await expect(dialog.getByTestId('recipient-party-label')).toContainText('Demo recipient');
+  await expect(dialog.locator('.eia-mono')).toHaveText(PARTY.id);
+});
+
+test('falls back to the demo recipient when a prefilled recipientPartyId is not a UUID', async ({ page }) => {
+  const state = await installNotificationMock(page, {
+    queue: [NOTIFICATION_A],
+    catalogue: [NOTIFICATION_A]
+  });
+
+  const query = new URLSearchParams({
+    new: '1',
+    notificationType: 'DUNNING_NOTICE',
+    recipientPartyId: 'not-a-uuid',
+    subject: 'Invalid recipient fallback',
+    body: 'The prefilled recipient was malformed.'
+  });
+  await page.goto(`/?${query}`);
+
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByLabel('Notification type')).toHaveValue('DUNNING_NOTICE');
+  await expect(dialog.getByTestId('recipient-party-label')).toContainText('Demo recipient');
+  await expect(dialog.locator('.eia-mono')).toHaveText(PARTY.id);
+
+  await dialog.getByRole('button', { name: 'Create notification' }).click();
+  await expect(dialog).toBeHidden();
+  expect(state.createBody.recipientPartyId).toBe(PARTY.id);
+});
+
+test('opens an empty create draft for ?new=1 without prefill parameters', async ({ page }) => {
+  await installNotificationMock(page, {
+    queue: [NOTIFICATION_A],
+    catalogue: [NOTIFICATION_A]
+  });
+
+  await page.goto('/?new=1');
+
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByLabel('Notification type')).toHaveValue('NEW_CLAIM_NOTICE');
+  await expect(dialog.getByLabel('Channel')).toHaveValue('IN_APP');
+  await expect(dialog.getByLabel('Subject')).toHaveValue('');
+  await expect(dialog.getByLabel('Body')).toHaveValue('');
+  await expect(dialog.getByLabel('Template code')).toHaveValue('CLAIM_NOTICE_STANDARD');
+  await expect(dialog.getByTestId('recipient-party-label')).toContainText('Demo recipient');
+  await expect(page).toHaveURL(/new=1/);
+});
+
+test('does not reseed an edited draft or a normally opened create dialog', async ({ page }) => {
+  await installNotificationMock(page, {
+    queue: [NOTIFICATION_A],
+    catalogue: [NOTIFICATION_A]
+  });
+
+  const query = new URLSearchParams({
+    new: '1',
+    subject: 'Prefilled subject',
+    body: 'Prefilled body',
+    templateCode: 'DUNNING_NOTICE_STANDARD'
+  });
+  await page.goto(`/?${query}`);
+
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.getByLabel('Subject')).toHaveValue('Prefilled subject');
+
+  await dialog.getByLabel('Subject').fill('Edited subject');
+  await dialog.getByLabel('Body').fill('Edited body');
+
+  // A popstate with the prefill URL still current never overwrites the draft.
+  await page.evaluate(() => window.dispatchEvent(new PopStateEvent('popstate')));
+  await expect(dialog.getByLabel('Subject')).toHaveValue('Edited subject');
+  await expect(dialog.getByLabel('Body')).toHaveValue('Edited body');
+
+  await dialog.getByRole('button', { name: 'Close' }).click();
+  await expect(dialog).toBeHidden();
+
+  // Opening create normally always starts from the defaults.
+  await page.getByRole('button', { name: 'Create notification' }).click();
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByLabel('Subject')).toHaveValue('');
+  await expect(dialog.getByLabel('Body')).toHaveValue('');
+  await expect(dialog.getByLabel('Template code')).toHaveValue('CLAIM_NOTICE_STANDARD');
+  await expect(page).toHaveURL(/new=1/);
+  await expect(page).not.toHaveURL(/templateCode|subject=/);
+});
+
+test('ignores prefill parameters on a record link', async ({ page }) => {
+  await installNotificationMock(page);
+
+  const query = new URLSearchParams({
+    record: NOTIFICATION_B.id,
+    notificationType: 'DUNNING_NOTICE',
+    subject: 'Ignored prefill subject',
+    recipientPartyId: OTHER_PARTY_ID
+  });
+  await page.goto(`/?${query}`);
+
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(
+    page.locator('.eia-record-panel').getByRole('heading', { name: NOTIFICATION_B.notificationNumber })
+  ).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`record=${NOTIFICATION_B.id}`));
+});
+
 test('filters the notification queue by number, subject, recipient, channel, and status', async ({ page }) => {
   const state = await installNotificationMock(page);
 
