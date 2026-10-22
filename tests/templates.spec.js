@@ -267,7 +267,7 @@ test('creates a DRAFT template through the modal and preserves the payload', asy
     templateVersion: 3,
     locale: 'fr-CA',
     channel: 'EMAIL',
-    body: 'Payment {{paymentNumber}} requires approval.'
+    bodyTemplate: 'Payment {{paymentNumber}} requires approval.'
   });
   expect(state.templateGets).toBeGreaterThanOrEqual(2);
 });
@@ -325,7 +325,7 @@ test('validates the create form and sends a null channel when the optional field
     templateVersion: 2,
     locale: 'de-DE',
     channel: null,
-    body: 'Body for the locale test.'
+    bodyTemplate: 'Body for the locale test.'
   });
 });
 
