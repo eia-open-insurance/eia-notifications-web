@@ -6,6 +6,7 @@ const TEMPLATE_CHANNELS = ['IN_APP', 'EMAIL', 'SMS', 'PUSH', 'WEBHOOK', 'TASK', 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const LOCALE_PATTERN = /^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/;
 const FILTER_PLACEHOLDER = 'Filter templates by code, version, locale, channel, status, or approval…';
+const VERSION_HISTORY_LIMIT = 5;
 
 const EMPTY_FORM = {
   code: '',
@@ -59,6 +60,74 @@ function codeOf(template) {
 function versionOf(template) {
   const version = template?.templateVersion ?? template?.version;
   return version === 0 || version ? String(version) : '—';
+}
+
+function numericVersionOf(template) {
+  const raw = template?.templateVersion ?? template?.version;
+  if (raw === null || raw === undefined || String(raw).trim() === '') return null;
+  const version = Number(raw);
+  return Number.isInteger(version) && version >= 1 ? version : null;
+}
+
+function nextVersionOf(template) {
+  const version = numericVersionOf(template);
+  return String(version === null ? 1 : version + 1);
+}
+
+function bodyOf(template) {
+  if (template?.bodyTemplate !== undefined && template.bodyTemplate !== null) {
+    return String(template.bodyTemplate);
+  }
+  return template?.body ? String(template.body) : '';
+}
+
+/**
+ * Seeds the create form from an existing row. The new template keeps the same
+ * code, locale, channel, and body, but always targets the next whole version so
+ * the creation stays a new revision of the same template rather than an edit.
+ */
+function draftFromTemplate(template) {
+  return {
+    code: codeOf(template),
+    version: nextVersionOf(template),
+    locale: template.locale || EMPTY_FORM.locale,
+    channel: template.channel || '',
+    body: bodyOf(template)
+  };
+}
+
+function versionHistoryFor(templates, source) {
+  const code = String(codeOf(source) || '').trim();
+  if (!code) return [];
+  return templates
+    .filter((template) => String(codeOf(template) || '').trim() === code)
+    .map((template) => ({ template, version: numericVersionOf(template) }))
+    .sort((left, right) => {
+      if (left.version === null && right.version === null) return 0;
+      if (left.version === null) return 1;
+      if (right.version === null) return -1;
+      if (right.version !== left.version) return right.version - left.version;
+      return String(left.template.locale || '').localeCompare(String(right.template.locale || ''));
+    });
+}
+
+/**
+ * The dialog keeps the history short: newest first, with the version being
+ * copied from always present even when it falls outside the newest rows.
+ */
+function shortVersionHistory(templates, source) {
+  const all = versionHistoryFor(templates, source);
+  if (all.length <= VERSION_HISTORY_LIMIT) {
+    return { rows: all, total: all.length, trimmed: false, sourceAppended: false };
+  }
+  const sourceId = source?.id;
+  const sourceEntry = all.find((entry) => (
+    sourceId ? entry.template.id === sourceId : entry.template === source
+  ));
+  const rows = all.slice(0, VERSION_HISTORY_LIMIT);
+  const sourceAppended = Boolean(sourceEntry) && !rows.some((entry) => entry === sourceEntry);
+  if (sourceAppended) rows.push(sourceEntry);
+  return { rows, total: all.length, trimmed: true, sourceAppended };
 }
 
 function statusOf(template) {
@@ -164,6 +233,7 @@ export default function TemplatesPanel() {
   const [notice, setNotice] = useState('');
   const [filter, setFilter] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
+  const [newVersionSource, setNewVersionSource] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [creating, setCreating] = useState(false);
   const [approveTarget, setApproveTarget] = useState(null);
@@ -173,6 +243,14 @@ export default function TemplatesPanel() {
   const aliveRef = useRef(true);
 
   const filteredTemplates = useMemo(() => filterTemplates(templates, filter), [templates, filter]);
+  const versionHistory = useMemo(
+    () => (
+      newVersionSource
+        ? shortVersionHistory(templates, newVersionSource)
+        : { rows: [], total: 0, trimmed: false, sourceAppended: false }
+    ),
+    [templates, newVersionSource]
+  );
 
   useEffect(() => {
     aliveRef.current = true;
@@ -200,6 +278,7 @@ export default function TemplatesPanel() {
       if (event.key !== 'Escape') return;
       if (creating || approving) return;
       setCreateOpen(false);
+      setNewVersionSource(null);
       setApproveTarget(null);
       setApproverId('');
       setError('');
@@ -249,6 +328,20 @@ export default function TemplatesPanel() {
 
   function openCreate() {
     setForm({ ...EMPTY_FORM });
+    setNewVersionSource(null);
+    setError('');
+    setNotice('');
+    setCreateOpen(true);
+  }
+
+  /**
+   * Opens the same create dialog in new-version mode. The source row stays in
+   * state so the dialog can explain what it is based on and show the compact
+   * same-code history; the form itself is fully editable.
+   */
+  function openNewVersion(template) {
+    setForm(draftFromTemplate(template));
+    setNewVersionSource(template);
     setError('');
     setNotice('');
     setCreateOpen(true);
@@ -257,6 +350,7 @@ export default function TemplatesPanel() {
   function closeCreate() {
     if (creating) return;
     setCreateOpen(false);
+    setNewVersionSource(null);
     setError('');
   }
 
@@ -272,6 +366,7 @@ export default function TemplatesPanel() {
 
     const code = form.code.trim();
     const version = Number(form.version);
+    const basedOn = newVersionSource;
     setCreating(true);
     try {
       const body = await api(TEMPLATES_ENDPOINT, {
@@ -287,9 +382,16 @@ export default function TemplatesPanel() {
       const created = unwrapTemplate(body);
       if (created) mergeTemplate(created);
       setCreateOpen(false);
+      setNewVersionSource(null);
       setForm({ ...EMPTY_FORM });
-      setNotice(`Template ${code} v${version} created as DRAFT.`);
+      setNotice(
+        basedOn
+          ? `Template ${code} v${version} created as DRAFT based on v${versionOf(basedOn)}.`
+          : `Template ${code} v${version} created as DRAFT.`
+      );
     } catch (cause) {
+      // Validation and duplicate (409) responses stay in the dialog so the
+      // user can correct the draft without losing the prefilled fields.
       setError(errorText(cause));
     } finally {
       setCreating(false);
@@ -516,6 +618,15 @@ export default function TemplatesPanel() {
                     <td>{formatInstant(template.updatedAt || template.updated_at)}</td>
                     <td>
                       <div className="eia-template-actions">
+                        <button
+                          type="button"
+                          className="eia-btn-ghost"
+                          aria-label={`New version of ${labelOf(template)}`}
+                          onClick={() => openNewVersion(template)}
+                          disabled={creating || approving || retiringId === template.id}
+                        >
+                          New version
+                        </button>
                         {canApprove && (
                           <button
                             type="button"
@@ -538,7 +649,6 @@ export default function TemplatesPanel() {
                             {retiringId === template.id ? 'Retiring…' : 'Retire'}
                           </button>
                         )}
-                        {!canApprove && !canRetire && <span className="eia-muted">—</span>}
                       </div>
                     </td>
                   </tr>
@@ -566,15 +676,94 @@ export default function TemplatesPanel() {
           >
             <div className="eia-record-title">
               <div>
-                <h2 id="create-template-title" style={{ margin: 0 }}>Create template</h2>
+                <h2 id="create-template-title" style={{ margin: 0 }}>
+                  {newVersionSource
+                    ? `New version of ${codeOf(newVersionSource) || 'template'}`
+                    : 'Create template'}
+                </h2>
                 <p className="eia-record-subtitle">
-                  Creates a DRAFT template. It cannot send a notification until it is approved.
+                  {newVersionSource
+                    ? `Starts a new DRAFT from v${versionOf(newVersionSource)}. Every field is prefilled and editable; it cannot send until it is approved.`
+                    : 'Creates a DRAFT template. It cannot send a notification until it is approved.'}
                 </p>
               </div>
               <button type="button" className="eia-btn-ghost" onClick={closeCreate} disabled={creating}>
                 Close
               </button>
             </div>
+
+            {newVersionSource && (
+              <section
+                className="eia-context-panel eia-version-context"
+                aria-label="New template version context"
+                data-testid="template-version-context"
+                style={{ marginTop: 14 }}
+              >
+                <div className="eia-version-context-head">
+                  <h4>Based on v{versionOf(newVersionSource)}</h4>
+                  <span className="eia-pill blue">
+                    Will create v{nextVersionOf(newVersionSource)} DRAFT
+                  </span>
+                </div>
+                <p>
+                  Code, locale, channel, and body are copied from{' '}
+                  <b>{labelOf(newVersionSource)}</b>. Adjust them before creating; the new row
+                  starts as DRAFT and needs approval before it can send.
+                </p>
+                <div className="eia-version-history-head">
+                  <span>Version history</span>
+                  <span className="eia-muted">{codeOf(newVersionSource) || 'template'}</span>
+                </div>
+                {versionHistory.rows.length === 0 ? (
+                  <p className="eia-muted" data-testid="template-version-history-empty">
+                    No versions found.
+                  </p>
+                ) : (
+                  <ol
+                    className="eia-version-history"
+                    data-testid="template-version-history"
+                    aria-label={`Version history for ${codeOf(newVersionSource) || 'this template'}`}
+                  >
+                    {versionHistory.rows.map(({ template: rowTemplate, version }) => {
+                      const isSource = newVersionSource?.id
+                        ? rowTemplate.id === newVersionSource.id
+                        : rowTemplate === newVersionSource;
+                      const rowKey = rowTemplate.id
+                        || `${codeOf(rowTemplate)}-${version}-${rowTemplate.locale}`;
+                      return (
+                        <li
+                          key={rowKey}
+                          className={isSource ? 'current' : ''}
+                          data-version={version === null ? undefined : version}
+                        >
+                          <span className="eia-version-number">
+                            v{version === null ? '—' : version}
+                          </span>
+                          <span className="eia-version-meta">
+                            {rowTemplate.locale || '—'}
+                            {' · '}
+                            {rowTemplate.channel || 'Any channel'}
+                          </span>
+                          <span className={`eia-pill ${statusTone(statusOf(rowTemplate))}`}>
+                            {statusOf(rowTemplate)}
+                          </span>
+                          {isSource && <span className="eia-version-source">source</span>}
+                        </li>
+                      );
+                    })}
+                  </ol>
+                )}
+                {versionHistory.trimmed && (
+                  <p
+                    className="eia-muted eia-version-history-note"
+                    data-testid="template-version-history-note"
+                  >
+                    Showing the newest {VERSION_HISTORY_LIMIT} of {versionHistory.total} versions
+                    {versionHistory.sourceAppended ? ', plus the version this draft is based on' : ''}.
+                  </p>
+                )}
+              </section>
+            )}
 
             <form className="eia-form-grid" onSubmit={createTemplate} noValidate style={{ marginTop: 16 }}>
               <Field label="Code" htmlFor="templateCode">

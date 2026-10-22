@@ -930,3 +930,77 @@ main [role="status"] {
 .eia-template-actions .eia-btn-danger:hover {
   background: #872626 !important;
 }
+
+.eia-version-context-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.eia-version-history-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 12px;
+  color: var(--eia-muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.eia-version-history {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+}
+
+.eia-version-history li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 4px 8px;
+  border: 1px solid var(--eia-line);
+  border-radius: 4px;
+  background: #fff;
+  font-size: 11px;
+}
+
+.eia-version-history li.current {
+  border-color: #9dc3e6;
+  background: #f2f7fc;
+}
+
+.eia-version-number {
+  min-width: 32px;
+  color: var(--eia-navy);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.eia-version-meta {
+  flex: 1 1 150px;
+  color: var(--eia-muted);
+  overflow-wrap: anywhere;
+}
+
+.eia-version-source {
+  color: var(--eia-blue);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.eia-version-history-note {
+  margin: 6px 0 0 !important;
+  font-size: 10px !important;
+}

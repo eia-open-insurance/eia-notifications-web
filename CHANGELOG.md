@@ -48,12 +48,20 @@ The format is based on Keep a Changelog and the project uses Semantic Versioning
   version, locale, channel, status, approval with approver/approved-at, updated), client-side
   filter, result count, and empty state. The section states the approval gate: only ACTIVE
   templates with an approval record can send notifications.
-- Create template dialog posting `{templateCode, templateVersion, locale, channel, body}` (channel
-  optional and sent as `null`) to create a DRAFT, with client-side validation for code, version,
-  locale, and body.
+- Create template dialog posting `{templateCode, templateVersion, locale, channel, bodyTemplate}`
+  (channel optional and sent as `null`) to create a DRAFT, with client-side validation for code,
+  version, locale, and body.
+- New-version action on every template row, including RETIRED rows. It opens the same create dialog
+  prefilled with the source code, locale, optional channel, and body, and sets the version to the
+  source version + 1. The dialog shows a "Based on vX" context card and a compact same-code version
+  history (newest first, source marked), and every field remains editable. Validation and duplicate
+  409 responses stay inside the dialog; the created row is DRAFT and the success notice names the
+  base version.
 - Approve action for DRAFT templates through an approver UUID dialog (`approvedBy`), and retire for
   DRAFT/ACTIVE templates. Actions reload the registry; approval and retirement responses are merged
   first, and a 409 conflict is contained in the section while the reload shows the winning state.
 - Playwright template coverage for list/filter, gate context and action availability, create payload
-  and DRAFT result, validation, approver UUID validation, approve, retire, contained 409 with
-  reload, and a contained registry load failure.
+  and DRAFT result, validation, new-version prefill/version + 1/payload/create, same-code history
+  ordering and source marker, duplicate 409 and validation errors contained in the dialog, approver
+  UUID validation, approve, retire, contained 409 with reload, and a contained registry load
+  failure.

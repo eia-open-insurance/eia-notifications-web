@@ -14,6 +14,7 @@ workbench holds no business logic. Every action calls the domain service.
 | Create notification | Primary header action (`?new=1`); opens a compact dialog with a predictive recipient `EntityPicker` backed by `/api/v1/parties/search`. Supports URL prefill for type, channel, recipient, subject, body, and template |
 | Templates | Top-level section (switch beside Notifications) reading `GET /api/v1/notifications/templates`: code, version, locale, channel, status, approval, and updated columns with a client-side filter, count, and empty state. The approval-gate panel states that only ACTIVE approved templates can send |
 | Create template | Dialog with code, version, locale, optional channel, and body; `POST /api/v1/notifications/templates` creates a DRAFT and the registry reloads |
+| New template version | Row action on every template. Opens the same create dialog prefilled with the source row's code, locale, channel, and body and `version + 1`, with a "Based on vX" context card and a compact same-code version history. Creating posts the normal template payload and the new row is DRAFT |
 | Approve template | DRAFT-only action; requires a valid approver UUID and posts `{approvedBy}` to `POST /api/v1/notifications/templates/{id}/approve`, then reloads |
 | Retire template | DRAFT/ACTIVE-only action posting to `POST /api/v1/notifications/templates/{id}/retire`, then reloads |
 | Overview | Notification facts, recipient party cross-links, the "Why this matters" delivery context panel, and a related-records note |
@@ -72,12 +73,29 @@ locale, channel, status, and approval state; it reloads nothing.
 
 A template is created through a dialog with code, version, locale, optional
 channel, and body. The payload is `{templateCode, templateVersion, locale,
-channel, body}` with `channel: null` when the optional field is blank, and the
-new row is a DRAFT. Approval is available only on DRAFT rows and requires an
-approver UUID; the action posts `{approvedBy}` to
+channel, bodyTemplate}` with `channel: null` when the optional field is blank,
+and the new row is a DRAFT. Approval is available only on DRAFT rows and
+requires an approver UUID; the action posts `{approvedBy}` to
 `/api/v1/notifications/templates/{id}/approve`. Retirement is available on
-DRAFT and ACTIVE rows and posts to `/retire`. RETIRED rows keep the actions
-column empty.
+DRAFT and ACTIVE rows and posts to `/retire`. Every row, including RETIRED
+rows, also keeps the New version action and no longer shows an empty actions
+cell.
+
+**New version** opens the same create dialog in place. Code, locale, channel
+("Any channel" stays blank), and body are copied from the selected row, and the
+version is the selected row's version + 1. Nothing is locked: every field can be
+adjusted before the normal create request is sent, and the created row is
+always a DRAFT. The dialog shows a "Based on v{X}" context card and a compact
+history of every template sharing the source code, newest version first; the
+list is capped at five rows but the source version is appended when it falls
+outside the newest five. The history shows each version's locale, channel,
+status, and which row the draft was copied from.
+
+A client-side validation failure or a duplicate (409, for example
+`EIA-NTF-9205` because the same code, version, and locale already exists) is
+shown inside the dialog without closing it and without losing the prefilled
+fields, so the user can correct the draft and resubmit. The success notice
+names the base version.
 
 Every create, approve, and retire response is merged into the table and then
 the registry is reloaded, so the table reflects the server. Errors stay inside
@@ -102,10 +120,14 @@ payload facts, the empty state, a contained 503, explicit refresh, and refetch
 when another notification is selected. `tests/templates.spec.js` covers the
 registry list, table columns, approval-gate context, action availability, and
 filter; create payload and DRAFT result; form validation and the optional
-channel as `null`; approver UUID validation and approval; retirement; a 409
-approval conflict that reloads the winning state; and a contained list-load
-failure that leaves the notification queue usable. Run with `npm test`; the
-Playwright config starts the dev server on port 3010.
+channel as `null`; new-version prefill of code, locale, channel, body, and
+version + 1 from the API-shaped `code`/`version`/`bodyTemplate` response; the
+same-code history order and source marker; editing the cloned body; duplicate
+409 and validation errors contained in the dialog; the corrected DRAFT create;
+approver UUID validation and approval; retirement; a 409 approval conflict that
+reloads the winning state; and a contained list-load failure that leaves the
+notification queue usable. Run with `npm test`; the Playwright config starts the
+dev server on port 3010.
 
 ## Remaining gaps
 
@@ -114,6 +136,7 @@ Playwright config starts the dev server on port 3010.
   slice. The Activity tab surfaces emitted notification events, not delivery
   attempts.
 - Pagination, optimistic concurrency headers, and idempotency keys are not used
-  by the remote. The template registry loads the full list; create uses the
-  server's unique constraint and surfaces a duplicate as a 409.
+  by the remote. The template registry loads the full list and the new-version
+  dialog derives its short history from that list; create uses the server's
+  unique constraint and surfaces a duplicate as a 409.
 - No accessibility audit beyond semantic labels, tab state, and live regions.

@@ -41,6 +41,29 @@ function template(overrides = {}) {
   };
 }
 
+/**
+ * The template-management API projection uses `code`, `version`, and
+ * `bodyTemplate`; keeping a separate fixture proves the new-version flow reads
+ * the real response shape, not only the legacy aliases used by older tests.
+ */
+function apiTemplate(overrides = {}) {
+  return {
+    id: '0192f3a4-0000-7000-8000-000000000150',
+    tenantId: TENANT,
+    code: 'CLAIM_NOTICE_STANDARD',
+    version: 1,
+    locale: 'en-US',
+    channel: null,
+    bodyTemplate: 'Claim {{claimNumber}} requires attention.',
+    status: 'ACTIVE',
+    approvedBy: APPROVER,
+    approvedAt: '2026-10-19T15:02:11Z',
+    createdAt: '2026-10-18T09:00:00Z',
+    updatedAt: '2026-10-19T15:02:11Z',
+    ...overrides
+  };
+}
+
 async function json(route, status, body) {
   await route.fulfill({
     status,
@@ -192,6 +215,15 @@ test('lists templates, surfaces the approval gate, and filters the registry', as
   await expect(
     page.getByRole('button', { name: 'Retire LEGACY_NOTICE v3', exact: true })
   ).toHaveCount(0);
+  await expect(
+    page.getByRole('button', { name: 'New version of CLAIM_NOTICE_STANDARD v1', exact: true })
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'New version of CLAIM_NOTICE_DRAFT v1', exact: true })
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'New version of LEGACY_NOTICE v3', exact: true })
+  ).toBeVisible();
 
   const filter = page.getByTestId('template-filter');
   await filter.fill('draft');
@@ -239,6 +271,8 @@ test('creates a DRAFT template through the modal and preserves the payload', asy
   await page.getByRole('button', { name: 'Create template', exact: true }).click();
   const dialog = page.getByTestId('create-template-dialog');
   await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole('heading', { name: 'Create template', exact: true })).toBeVisible();
+  await expect(dialog.getByTestId('template-version-context')).toHaveCount(0);
   await expect(dialog.getByLabel('Code')).toBeVisible();
   await expect(dialog.getByLabel('Version')).toHaveValue('1');
   await expect(dialog.getByLabel('Locale')).toHaveValue('en-US');
@@ -326,6 +360,227 @@ test('validates the create form and sends a null channel when the optional field
     locale: 'de-DE',
     channel: null,
     bodyTemplate: 'Body for the locale test.'
+  });
+});
+
+test('creates the next version from a prefilled source and shows same-code history', async ({ page }) => {
+  const source = apiTemplate({
+    id: '0192f3a4-0000-7000-8000-000000000501',
+    version: 3,
+    locale: 'fr-CA',
+    channel: 'EMAIL',
+    bodyTemplate: 'Claim {{claimNumber}} requires attention. (v3)',
+    updatedAt: '2026-10-21T09:30:00Z'
+  });
+  const previous = apiTemplate({
+    id: '0192f3a4-0000-7000-8000-000000000502',
+    version: 2,
+    locale: 'en-US',
+    channel: 'EMAIL',
+    bodyTemplate: 'Claim {{claimNumber}} requires attention. (v2)',
+    status: 'RETIRED',
+    updatedAt: '2026-10-20T09:30:00Z'
+  });
+  const oldest = apiTemplate({
+    id: '0192f3a4-0000-7000-8000-000000000503',
+    version: 1,
+    locale: 'en-US',
+    channel: null,
+    bodyTemplate: 'Claim {{claimNumber}} requires attention. (v1)',
+    status: 'RETIRED',
+    approvedBy: null,
+    approvedAt: null,
+    updatedAt: '2026-10-19T09:30:00Z'
+  });
+  const otherCode = apiTemplate({
+    id: '0192f3a4-0000-7000-8000-000000000504',
+    code: 'PAYMENT_APPROVAL',
+    version: 9,
+    locale: 'de-DE',
+    channel: 'SMS',
+    bodyTemplate: 'Payment {{paymentNumber}} requires approval.',
+    status: 'DRAFT',
+    approvedBy: null,
+    approvedAt: null
+  });
+  const state = { templates: [source, previous, oldest, otherCode] };
+  let createdPayload = null;
+  state.onCreate = async (route) => {
+    createdPayload = route.request().postDataJSON();
+    const created = apiTemplate({
+      id: '0192f3a4-0000-7000-8000-000000000505',
+      code: createdPayload.templateCode,
+      version: createdPayload.templateVersion,
+      locale: createdPayload.locale,
+      channel: createdPayload.channel,
+      bodyTemplate: createdPayload.bodyTemplate,
+      status: 'DRAFT',
+      approvedBy: null,
+      approvedAt: null,
+      updatedAt: '2026-10-22T12:00:00Z'
+    });
+    state.templates = [created, ...state.templates];
+    await json(route, 201, created);
+  };
+  state.onApprove = async (route) => json(route, 500, problem('EIA-NTF-9999', 'not used', 500));
+  state.onRetire = async (route) => json(route, 500, problem('EIA-NTF-9999', 'not used', 500));
+  await installApi(page, state);
+
+  await openTemplates(page);
+  await page.getByRole('button', {
+    name: 'New version of CLAIM_NOTICE_STANDARD v3',
+    exact: true
+  }).click();
+
+  const dialog = page.getByTestId('create-template-dialog');
+  await expect(dialog).toBeVisible();
+  await expect(
+    dialog.getByRole('heading', { name: 'New version of CLAIM_NOTICE_STANDARD', exact: true })
+  ).toBeVisible();
+
+  // Everything the source row carries is copied, except the version, which is
+  // the next whole revision.
+  await expect(dialog.getByLabel('Code')).toHaveValue('CLAIM_NOTICE_STANDARD');
+  await expect(dialog.locator('#templateVersion')).toHaveValue('4');
+  await expect(dialog.getByLabel('Locale')).toHaveValue('fr-CA');
+  await expect(dialog.getByLabel('Channel')).toHaveValue('EMAIL');
+  await expect(dialog.getByLabel('Body')).toHaveValue(
+    'Claim {{claimNumber}} requires attention. (v3)'
+  );
+
+  const context = dialog.getByTestId('template-version-context');
+  await expect(context).toContainText('Based on v3');
+  await expect(context).toContainText('Will create v4 DRAFT');
+  await expect(context).not.toContainText('PAYMENT_APPROVAL');
+
+  const historyRows = context.getByTestId('template-version-history').locator('li');
+  await expect(historyRows).toHaveCount(3);
+  await expect(historyRows.nth(0)).toHaveAttribute('data-version', '3');
+  await expect(historyRows.nth(1)).toHaveAttribute('data-version', '2');
+  await expect(historyRows.nth(2)).toHaveAttribute('data-version', '1');
+  await expect(historyRows.nth(0)).toContainText('source');
+  await expect(historyRows.nth(1)).toContainText('RETIRED');
+
+  // The user can still adjust the cloned draft before it is created.
+  await dialog.getByLabel('Body').fill('Claim {{claimNumber}} requires attention. (v4 edited)');
+  await dialog.getByRole('button', { name: 'Create template', exact: true }).click();
+
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole('status')).toContainText(
+    'Template CLAIM_NOTICE_STANDARD v4 created as DRAFT based on v3.'
+  );
+  const createdRow = page.getByTestId('template-row-0192f3a4-0000-7000-8000-000000000505');
+  await expect(createdRow).toContainText('CLAIM_NOTICE_STANDARD');
+  await expect(createdRow).toContainText('DRAFT');
+  await expect(page.getByTestId('templates-table').locator('tbody tr')).toHaveCount(5);
+
+  expect(createdPayload).toEqual({
+    templateCode: 'CLAIM_NOTICE_STANDARD',
+    templateVersion: 4,
+    locale: 'fr-CA',
+    channel: 'EMAIL',
+    bodyTemplate: 'Claim {{claimNumber}} requires attention. (v4 edited)'
+  });
+  expect(state.templateGets).toBeGreaterThanOrEqual(2);
+});
+
+test('keeps validation and duplicate errors inside the new-version modal', async ({ page }) => {
+  const source = apiTemplate({
+    id: '0192f3a4-0000-7000-8000-000000000511',
+    version: 1,
+    locale: 'en-US',
+    channel: 'EMAIL',
+    bodyTemplate: 'Claim {{claimNumber}} requires attention. (v1)'
+  });
+  const existing = apiTemplate({
+    id: '0192f3a4-0000-7000-8000-000000000512',
+    version: 2,
+    locale: 'en-US',
+    channel: 'EMAIL',
+    bodyTemplate: 'Claim {{claimNumber}} requires attention. (v2)',
+    status: 'DRAFT',
+    approvedBy: null,
+    approvedAt: null
+  });
+  const state = { templates: [source, existing] };
+  const attempts = [];
+  state.onCreate = async (route) => {
+    const payload = route.request().postDataJSON();
+    attempts.push(payload);
+    if (attempts.length === 1) {
+      await json(
+        route,
+        409,
+        problem(
+          'EIA-NTF-9205',
+          `Template '${payload.templateCode}' version ${payload.templateVersion} locale '${payload.locale}' already exists for tenant '${TENANT}'.`,
+          409
+        )
+      );
+      return;
+    }
+    const created = apiTemplate({
+      id: '0192f3a4-0000-7000-8000-000000000513',
+      code: payload.templateCode,
+      version: payload.templateVersion,
+      locale: payload.locale,
+      channel: payload.channel,
+      bodyTemplate: payload.bodyTemplate,
+      status: 'DRAFT',
+      approvedBy: null,
+      approvedAt: null,
+      updatedAt: '2026-10-22T13:00:00Z'
+    });
+    state.templates = [created, ...state.templates];
+    await json(route, 201, created);
+  };
+  state.onApprove = async (route) => json(route, 500, problem('EIA-NTF-9999', 'not used', 500));
+  state.onRetire = async (route) => json(route, 500, problem('EIA-NTF-9999', 'not used', 500));
+  await installApi(page, state);
+
+  await openTemplates(page);
+  await page.getByRole('button', {
+    name: 'New version of CLAIM_NOTICE_STANDARD v1',
+    exact: true
+  }).click();
+  const dialog = page.getByTestId('create-template-dialog');
+  const submit = dialog.getByRole('button', { name: 'Create template', exact: true });
+  await expect(dialog.locator('#templateVersion')).toHaveValue('2');
+
+  // Client-side validation stays in the modal and never reaches the API.
+  await dialog.getByLabel('Code').fill('');
+  await submit.click();
+  await expect(dialog.getByRole('alert')).toContainText('Code is required.');
+  await expect(dialog).toBeVisible();
+  expect(attempts).toHaveLength(0);
+
+  await dialog.getByLabel('Code').fill('CLAIM_NOTICE_STANDARD');
+  await submit.click();
+  await expect(dialog.getByRole('alert')).toHaveText(
+    `EIA-NTF-9205: Template 'CLAIM_NOTICE_STANDARD' version 2 locale 'en-US' already exists for tenant '${TENANT}'.`
+  );
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByTestId('template-version-context')).toContainText('Based on v1');
+  await expect(page.getByTestId('templates-table').locator('tbody tr')).toHaveCount(2);
+  expect(attempts).toHaveLength(1);
+  expect(attempts[0].templateVersion).toBe(2);
+
+  // Correcting the version clears the duplicate error and creates the DRAFT.
+  await dialog.locator('#templateVersion').fill('3');
+  await submit.click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole('status')).toContainText(
+    'Template CLAIM_NOTICE_STANDARD v3 created as DRAFT based on v1.'
+  );
+  await expect(
+    page.getByTestId('template-row-0192f3a4-0000-7000-8000-000000000513')
+  ).toContainText('DRAFT');
+  expect(attempts[1]).toEqual({
+    templateCode: 'CLAIM_NOTICE_STANDARD',
+    templateVersion: 3,
+    locale: 'en-US',
+    channel: 'EMAIL',
+    bodyTemplate: 'Claim {{claimNumber}} requires attention. (v1)'
   });
 });
 

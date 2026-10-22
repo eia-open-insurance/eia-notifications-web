@@ -71,6 +71,11 @@ No business logic; all actions go through the domain service.
   columns, plus a client-side filter, result count, and empty state.
 - Create template dialog (`POST /api/v1/notifications/templates`) with code, version, locale,
   optional channel, and body; the registry creates the row as `DRAFT` and reloads it from the API.
+- **New version** action on every template row (including `RETIRED` rows) opens the same create
+  dialog prefilled with the source `code`, `locale`, optional channel, and body, with the version set
+  to the source version + 1. A "Based on vX" context card and a compact same-code version history
+  (newest first, with the source marked) frame the draft, and every field stays editable. Validation
+  and duplicate 409 responses stay inside the dialog, and the created row is `DRAFT`.
 - Approve action (`POST .../templates/{id}/approve`) for `DRAFT` rows opens an approver dialog and
   requires a valid approver UUID. Retire (`POST .../templates/{id}/retire`) is available for `DRAFT`
   and `ACTIVE` rows only. Every transition reloads the registry, and a 409 conflict is shown in the
@@ -78,8 +83,10 @@ No business logic; all actions go through the domain service.
 - Visible approval-gate context: only `ACTIVE` templates with an approval record can send
   notifications; `DRAFT` and `RETIRED` templates remain visible for administration and audit.
 - Playwright template coverage for listing and filtering, approval-gate context and action
-  availability, create payload (`DRAFT`, optional channel as `null`), validation, approver UUID
-  validation, approve, retire, a contained 409 with reload, and a contained list-load failure.
+  availability, create payload (`DRAFT`, optional channel as `null`), validation, new-version
+  prefill/version + 1/payload/create, same-code history ordering and source marker, duplicate 409
+  and validation errors contained in the dialog, approver UUID validation, approve, retire, a
+  contained 409 with reload, and a contained list-load failure.
 
 ## Local verification
 
