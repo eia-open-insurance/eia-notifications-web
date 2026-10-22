@@ -281,7 +281,7 @@ export default function TemplatesPanel() {
           templateVersion: version,
           locale: form.locale.trim(),
           channel: form.channel || null,
-          body: form.body.trim()
+          bodyTemplate: form.body.trim()
         })
       });
       const created = unwrapTemplate(body);

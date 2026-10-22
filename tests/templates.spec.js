@@ -220,7 +220,7 @@ test('creates a DRAFT template through the modal and preserves the payload', asy
       templateVersion: createdPayload.templateVersion,
       locale: createdPayload.locale,
       channel: createdPayload.channel,
-      body: createdPayload.body,
+      body: createdPayload.bodyTemplate,
       status: 'DRAFT',
       approvedBy: null,
       approvedAt: null,
@@ -283,7 +283,7 @@ test('validates the create form and sends a null channel when the optional field
       templateVersion: createPayload.templateVersion,
       locale: createPayload.locale,
       channel: createPayload.channel,
-      body: createPayload.body,
+      body: createPayload.bodyTemplate,
       status: 'DRAFT',
       approvedBy: null,
       approvedAt: null
