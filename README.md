@@ -73,6 +73,15 @@ No business logic; all actions go through the domain service.
   type, inbox status, record version, and payload facts (channel, recipient party, type, status).
   The card refetches on selection, has card-local loading/empty/error states, refreshes on demand,
   and a 503 never blocks the notification record.
+- Delivery tab reads `GET /api/v1/notifications/{id}/attempts` as soon as a notification is opened
+  and lists the attempt number, provider, status, provider reference, attempted time, and error.
+  The provider is labelled as **local simulated delivery**, with an explicit note that no
+  production provider adapter is present in this slice. The card keeps loading, empty (a `CREATED`
+  notification has not been sent), and card-local error states plus its own Refresh action.
+  `providerReference` and `deliveredAt` are shown in the Sent summary card, the Overview details,
+  and the record-level Delivery table.
+- Playwright attempt coverage for the list columns and provider labelling, the CREATED empty state,
+  a contained attempts 503 with retry, and the provider reference/delivered-at display.
 - `@swc/core` is pinned to exactly `1.10.7`.
 - Playwright tests mock the API and cover list + detail, create, send, problem errors, URL discovery,
   create prefill (full, partial, invalid recipient, plain `new=1`, and no overwrite after an edit),

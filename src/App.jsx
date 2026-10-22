@@ -1,7 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import './ui.css';
 import ActivityTimeline from './ActivityTimeline.jsx';
+import DeliveryAttempts from './DeliveryAttempts.jsx';
 import EntityPicker from './EntityPicker.jsx';
+import { attemptsEndpoint, deliveryAttempts } from './attempts.js';
 import { navigate, recordHref } from './navigation.js';
 import { partyEndpoint, partyRecordLabel } from './party.js';
 import { activityEvents, aggregateEventsEndpoint } from './events.js';
@@ -51,6 +53,7 @@ const TABS = [
 ];
 
 const EMPTY_ACTIVITY = { recordId: '', items: [], loading: false, error: '' };
+const EMPTY_ATTEMPTS = { recordId: '', items: [], loading: false, error: '' };
 
 const EMPTY_FORM = {
   notificationType: 'NEW_CLAIM_NOTICE',
@@ -270,11 +273,14 @@ export default function App() {
   const [recipientParties, setRecipientParties] = useState({});
   const [activity, setActivity] = useState(EMPTY_ACTIVITY);
   const [activityNonce, setActivityNonce] = useState(0);
+  const [attempts, setAttempts] = useState(EMPTY_ATTEMPTS);
+  const [attemptsNonce, setAttemptsNonce] = useState(0);
 
   const notificationsRef = useRef([]);
   const createOpenRef = useRef(false);
   const applyingUrlRef = useRef(false);
   const activityRequestRef = useRef(0);
+  const attemptsRequestRef = useRef(0);
   const sourceFilterRef = useRef(sourceFilter);
 
   const selectedRow = notifications.find((notification) => notification.id === selectedId) || null;
@@ -289,6 +295,14 @@ export default function App() {
     ? EMPTY_ACTIVITY
     : activity.recordId === selected.id
       ? activity
+      : { recordId: selected.id, items: [], loading: true, error: '' };
+  // The attempt history belongs to exactly one notification. While a selection
+  // change is in flight, show the new record's loading state rather than the
+  // previous record's attempts.
+  const attemptsView = !selected
+    ? EMPTY_ATTEMPTS
+    : attempts.recordId === selected.id
+      ? attempts
       : { recordId: selected.id, items: [], loading: true, error: '' };
 
   function recipientLabelFor(notification) {
@@ -569,6 +583,50 @@ export default function App() {
     };
   }, [selectedId, activityNonce]);
 
+  /**
+   * Delivery attempts load as soon as a notification is selected, not only
+   * when the Delivery tab is opened, so the tab already has the history. The
+   * state is keyed by record id and stays card-local: a missing or unavailable
+   * attempts projection never blocks the notification record or its sends.
+   */
+  useEffect(() => {
+    const recordId = selectedId || '';
+    const requestId = attemptsRequestRef.current + 1;
+    attemptsRequestRef.current = requestId;
+
+    if (!recordId) {
+      setAttempts(EMPTY_ATTEMPTS);
+      return undefined;
+    }
+
+    let alive = true;
+    setAttempts({ recordId, items: [], loading: true, error: '' });
+
+    api(attemptsEndpoint(recordId))
+      .then((body) => {
+        if (!alive || attemptsRequestRef.current !== requestId) return;
+        setAttempts({
+          recordId,
+          items: deliveryAttempts(body),
+          loading: false,
+          error: ''
+        });
+      })
+      .catch((cause) => {
+        if (!alive || attemptsRequestRef.current !== requestId) return;
+        setAttempts({
+          recordId,
+          items: [],
+          loading: false,
+          error: `Delivery attempts are temporarily unavailable. ${errorText(cause)}`
+        });
+      });
+
+    return () => {
+      alive = false;
+    };
+  }, [selectedId, attemptsNonce]);
+
   const selectedRecipientPartyId = selected?.recipientPartyId || '';
 
   /**
@@ -745,6 +803,7 @@ export default function App() {
       if (selectedId) {
         setDetailNonce((value) => value + 1);
         setActivityNonce((value) => value + 1);
+        setAttemptsNonce((value) => value + 1);
       }
     } catch (cause) {
       setError(errorText(cause));
@@ -847,6 +906,7 @@ export default function App() {
       await load(notification.id);
       setDetailNonce((value) => value + 1);
       setActivityNonce((value) => value + 1);
+      setAttemptsNonce((value) => value + 1);
     } catch (cause) {
       setError(errorText(cause));
     } finally {
@@ -890,7 +950,7 @@ export default function App() {
         >
           <div className="eia-section-title">
             <h2>Delivery</h2>
-            <span className="eia-muted">Record-level delivery state</span>
+            <span className="eia-muted">Record-level state and simulated provider attempts</span>
           </div>
           <div className="eia-table-wrap">
             <table className="eia-table" data-testid="delivery-table">
@@ -901,6 +961,8 @@ export default function App() {
                   <th>Recipient</th>
                   <th>Scheduled</th>
                   <th>Sent</th>
+                  <th>Delivered</th>
+                  <th>Provider reference</th>
                 </tr>
               </thead>
               <tbody>
@@ -926,14 +988,30 @@ export default function App() {
                   </td>
                   <td>{formatInstant(notification.scheduledAt)}</td>
                   <td>{formatInstant(notification.sentAt)}</td>
+                  <td data-testid="delivery-delivered">{formatInstant(notification.deliveredAt)}</td>
+                  <td
+                    className="eia-mono"
+                    data-testid="delivery-provider-reference"
+                    title={notification.providerReference || undefined}
+                  >
+                    {notification.providerReference || '—'}
+                  </td>
                 </tr>
               </tbody>
             </table>
           </div>
           <p className="eia-muted" style={{ marginTop: 12 }}>
-            The Notifications API exposes delivery at the record level. Per-attempt delivery history is
-            not part of this API slice.
+            Delivery is simulated locally. Provider references are issued by the local simulated
+            provider; no production provider adapter (email/SMTP, SMS gateway, push, or webhook) is
+            present in this slice.
           </p>
+          <DeliveryAttempts
+            notification={notification}
+            items={attemptsView.items}
+            loading={attemptsView.loading}
+            error={attemptsView.error}
+            onRefresh={() => setAttemptsNonce((value) => value + 1)}
+          />
         </section>
       );
     }
@@ -1025,6 +1103,18 @@ export default function App() {
               <dd>{notification.status || '—'}</dd>
               <dt>Created</dt>
               <dd>{formatInstant(notification.createdAt)}</dd>
+              <dt>Sent</dt>
+              <dd data-testid="overview-sent">{formatInstant(notification.sentAt)}</dd>
+              <dt>Delivered</dt>
+              <dd data-testid="overview-delivered">{formatInstant(notification.deliveredAt)}</dd>
+              <dt>Provider reference</dt>
+              <dd
+                className="eia-mono"
+                data-testid="overview-provider-reference"
+                title={notification.providerReference || undefined}
+              >
+                {notification.providerReference || '—'}
+              </dd>
               <dt>Updated</dt>
               <dd>{formatInstant(notification.updatedAt)}</dd>
               <dt>Version</dt>
@@ -1380,6 +1470,20 @@ export default function App() {
                       <h3>Sent</h3>
                       <div className="value" data-testid="summary-sent">{formatInstant(selected.sentAt)}</div>
                       <div className="eia-metric-label">First successful send</div>
+                      <div className="eia-summary-meta">
+                        <span className="eia-muted">Delivered</span>{' '}
+                        <span data-testid="summary-delivered">{formatInstant(selected.deliveredAt)}</span>
+                      </div>
+                      <div className="eia-summary-meta">
+                        <span className="eia-muted">Provider ref</span>{' '}
+                        <span
+                          className="eia-mono"
+                          data-testid="summary-provider-reference"
+                          title={selected.providerReference || undefined}
+                        >
+                          {selected.providerReference || '—'}
+                        </span>
+                      </div>
                     </div>
                   </div>
 

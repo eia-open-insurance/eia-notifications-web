@@ -478,6 +478,7 @@ main [role="status"] {
 .eia-summary-grid .eia-card { padding: 12px 14px; }
 .eia-summary-grid h3 { margin-bottom: 3px; }
 .eia-summary-grid .value { font-size: 18px; font-weight: 700; color: var(--eia-navy); }
+.eia-summary-meta { margin-top: 3px; font-size: 10px; line-height: 1.45; overflow-wrap: anywhere; }
 
 .eia-kv { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 6px 14px; margin: 0; font-size: 12px; }
 .eia-kv dt { color: var(--eia-muted); }
@@ -807,6 +808,13 @@ main [role="status"] {
 /* Notification record activity: an event-derived, append-only timeline. */
 .eia-activity { padding: 14px 16px; }
 .eia-activity-note { font-size: 11px; line-height: 1.5; }
+
+/* Delivery attempts: record-level provider history. */
+.eia-delivery-attempts { padding: 14px 16px; margin-top: 16px; }
+.eia-delivery-attempts-note { font-size: 11px; line-height: 1.5; }
+.eia-delivery-attempts .eia-table td { vertical-align: top; }
+.eia-attempt-time { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.eia-attempt-error { color: var(--eia-red); overflow-wrap: anywhere; }
 
 .eia-timeline {
   list-style: none;

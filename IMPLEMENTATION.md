@@ -19,7 +19,7 @@ workbench holds no business logic. Every action calls the domain service.
 | Approve template | DRAFT-only action; requires a valid approver UUID and posts `{approvedBy}` to `POST /api/v1/notifications/templates/{id}/approve`, then reloads |
 | Retire template | DRAFT/ACTIVE-only action posting to `POST /api/v1/notifications/templates/{id}/retire`, then reloads |
 | Overview | Notification facts including the linked source record, recipient party cross-links, the "Why this matters" delivery context panel, and related records for the source and recipient |
-| Delivery | Record-level channel, status, recipient, scheduled, and sent state |
+| Delivery | Record-level channel, status, recipient, scheduled, sent, delivered, and provider-reference state, plus the per-attempt delivery history loaded from `GET /api/v1/notifications/{id}/attempts` |
 | Template | Bound template code/version and the rendered subject/body |
 | Activity | Event-derived, append-only timeline read from `GET /api/v1/events/aggregate/{id}?limit=50` with `X-EIA-Tenant`: timestamp, readable event name, inbox status, record version, and payload facts (channel, recipient party, type, status). Card-local loading, empty, and error states; refreshes on demand and on selection |
 
@@ -112,6 +112,44 @@ unfiltered queue. `?new=1` is deliberately exempt: source parameters there remai
 prefill and the queue loads unfiltered. Creating a notification outside the active scope clears the
 scope so the new record is visible.
 
+## Delivery attempts
+
+The Delivery tab shows both the record-level delivery state and the per-attempt
+history. The history loads as soon as a notification is selected (not only when
+the tab is opened) from `GET /api/v1/notifications/{id}/attempts` with
+`X-EIA-Tenant`, and refetches on **Refresh record**, after a send, and from the
+card's own **Refresh** action. The attempt state is keyed by notification id:
+while a selection change is in flight the card shows the new record's loading
+state, never the previous record's attempts.
+
+The table is oldest first by attempt number, and each row shows attempt number,
+provider, status, provider reference, attempted time, and the failure text when
+one exists. `src/attempts.js` normalizes the response and tolerates the API
+projection returning a bare list or an object with an `items`/`attempts` list;
+it also accepts the common field aliases (`attemptNo`/`sequence`,
+`providerName`/`providerCode`, `reference`/`providerRef`, `attemptedAt`/
+`createdAt`, `errorMessage`/`failureReason`/`errorCode`) so the record screen
+does not depend on one spelling. Unknown or absent statuses show `UNKNOWN`, and
+one malformed entry never discards the rest of the history.
+
+The provider is labelled **Local simulated delivery**. The card states that the
+notifications service simulates delivery locally, that provider references are
+issued by the local simulator, and that no production provider adapter
+(email/SMTP, SMS gateway, push, or webhook) is present in this slice. The same
+note appears under the record-level Delivery table.
+
+The card has its own loading, empty, and error states. A `CREATED` notification
+with no attempts explains that it has not been sent and that the first attempt
+is recorded when the send transition runs. An unavailable attempts projection
+(the endpoint may 404 or 503 when the backend slice is absent) is contained in
+the card: the record header, Overview, Template, and Activity tabs and the send
+action keep working.
+
+The record-level delivery evidence is carried on the notification itself:
+`providerReference` and `deliveredAt` appear in the summary **Sent** card, in
+the Overview **Notification details** (with `sentAt`), and as Delivered and
+Provider reference columns in the record-level Delivery table.
+
 ## Template registry and approval gate
 
 The **Templates** section is a top-level sibling of the notification queue. It
@@ -176,7 +214,13 @@ request, the short-id fallback, and `?new=1` staying a create prefill instead
 of a queue filter. `tests/activity.spec.js`
 covers the event-timeline path/limit/tenant header, newest-first rendering,
 payload facts, the empty state, a contained 503, explicit refresh, and refetch
-when another notification is selected. `tests/templates.spec.js` covers the
+when another notification is selected. `tests/attempts.spec.js` covers the
+attempts path and tenant header fetched on record open, the attempt
+number/provider/status/reference/attempted/error columns, local-simulated
+provider labelling and the production-adapter note, refetch when another
+record is opened, the CREATED empty state, a contained 503 with an explicit
+retry, and `providerReference`/`deliveredAt` in the Sent card, Overview
+details, and record-level Delivery table. `tests/templates.spec.js` covers the
 registry list, table columns, approval-gate context, action availability, and
 filter; create payload and DRAFT result; form validation and the optional
 channel as `null`; new-version prefill of code, locale, channel, body, and
@@ -190,9 +234,10 @@ dev server on port 3010.
 
 ## Remaining gaps
 
-- The Notifications API exposes delivery only at record level; per-attempt
-  delivery history is not available in this slice. The Activity tab surfaces
-  emitted notification events, not delivery attempts.
+- Delivery is served by a local simulated provider adapter. A production
+  provider adapter (email/SMTP, SMS gateway, push, or webhook) is not wired
+  into this slice, so provider references are simulator-issued. The Activity
+  tab surfaces emitted notification events separately from delivery attempts.
 - Pagination, optimistic concurrency headers, and idempotency keys are not used
   by the remote. The template registry loads the full list and the new-version
   dialog derives its short history from that list; create uses the server's

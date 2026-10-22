@@ -93,3 +93,13 @@ The format is based on Keep a Changelog and the project uses Semantic Versioning
   Playwright coverage for the `/notifications` view-all hand-off, the filtered request and banner,
   clear/reload, record selection and back navigation, partial/invalid pairs, the short-id fallback,
   and the `?new=1` non-filter path.
+- Delivery attempt history: the Delivery tab reads
+  `GET /api/v1/notifications/{id}/attempts` as soon as a notification is opened and lists attempt
+  number, provider, status, provider reference, attempted time, and failure text. The provider is
+  labelled as the local simulated delivery adapter, with an explicit note that no production
+  provider adapter is wired in this slice. The card has loading, empty (a CREATED notification has
+  not been sent yet), and card-local error states plus a Refresh action. The record summary Sent
+  card, the Overview details, and the record-level Delivery table now show
+  `providerReference`/`deliveredAt`. Playwright coverage for the list columns, the CREATED empty
+  state, a contained attempts-read failure with retry, and the provider reference/delivered-at
+  display.
