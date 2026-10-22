@@ -16,7 +16,7 @@ workbench holds no business logic. Every action calls the domain service.
 | Templates | Top-level section (switch beside Notifications) reading `GET /api/v1/notifications/templates`: code, version, locale, channel, status, approval, and updated columns with a client-side filter, count, and empty state. The approval-gate panel states that only ACTIVE approved templates can send |
 | Create template | Dialog with code, version, locale, optional channel, and body; `POST /api/v1/notifications/templates` creates a DRAFT and the registry reloads |
 | New template version | Row action on every template. Opens the same create dialog prefilled with the source row's code, locale, channel, and body and `version + 1`, with a "Based on vX" context card and a compact same-code version history. Creating posts the normal template payload and the new row is DRAFT |
-| Approve template | DRAFT-only action; requires a valid approver UUID and posts `{approvedBy}` to `POST /api/v1/notifications/templates/{id}/approve`, then reloads |
+| Approve template | DRAFT-only action; opens a typeahead over the public `GET /api/v1/directory` people by name/email, shows the selected person's name, role, email, teams, and directory id, and posts `{approvedBy}` with that id to `POST /api/v1/notifications/templates/{id}/approve`, then reloads. A directory failure or empty directory falls back to a manual approver id field |
 | Retire template | DRAFT/ACTIVE-only action posting to `POST /api/v1/notifications/templates/{id}/retire`, then reloads |
 | Overview | Notification facts including the linked source record, recipient party cross-links, the "Why this matters" delivery context panel, and related records for the source and recipient |
 | Delivery | Record-level channel, status, recipient, scheduled, sent, delivered, and provider-reference state, plus the per-attempt delivery history loaded from `GET /api/v1/notifications/{id}/attempts` |
@@ -155,19 +155,19 @@ Provider reference columns in the record-level Delivery table.
 The **Templates** section is a top-level sibling of the notification queue. It
 loads `GET /api/v1/notifications/templates` with `X-EIA-Tenant` and renders a
 registry table, not a per-notification binding view: code, version, locale,
-channel (optional, shown as "Any channel"), status, approval (approver short id
-and approved-at), and updated. The filter is client-side over code, version,
-locale, channel, status, and approval state; it reloads nothing.
+channel (optional, shown as "Any channel"), status, approval (the approver's
+directory name when the directory has been read, otherwise the short id, plus
+approved-at), and updated. The filter is client-side over code, version,
+locale, channel, status, approval state, and the resolved approver name; it
+reloads nothing.
 
 A template is created through a dialog with code, version, locale, optional
 channel, and body. The payload is `{templateCode, templateVersion, locale,
 channel, bodyTemplate}` with `channel: null` when the optional field is blank,
-and the new row is a DRAFT. Approval is available only on DRAFT rows and
-requires an approver UUID; the action posts `{approvedBy}` to
-`/api/v1/notifications/templates/{id}/approve`. Retirement is available on
-DRAFT and ACTIVE rows and posts to `/retire`. Every row, including RETIRED
-rows, also keeps the New version action and no longer shows an empty actions
-cell.
+and the new row is a DRAFT. Approval is available only on DRAFT rows. Retirement
+is available on DRAFT and ACTIVE rows and posts to `/retire`. Every row,
+including RETIRED rows, also keeps the New version action and no longer shows
+an empty actions cell.
 
 **New version** opens the same create dialog in place. Code, locale, channel
 ("Any channel" stays blank), and body are copied from the selected row, and the
@@ -193,6 +193,36 @@ that won; a failed list load shows the alert and an empty registry while the
 notification queue remains usable. The section carries an explicit approval
 gate note: only ACTIVE templates with an approval record can send, and the send
 path re-checks the template on every send (NTF-01, NTF-14).
+
+## Directory-backed approver
+
+The approval dialog's approver is a directory person. The first time the dialog
+opens, the app reads the public `GET /api/v1/directory` (`{people, teams}`) with
+`src/directory.js`; the normalized people and teams are cached for the rest of
+the session, a concurrent open joins the in-flight request, and later dialogs
+reuse the cache without another read. The endpoint is public master data, so the
+request omits the `X-EIA-Tenant` header (`api(path, {tenant: false})`).
+
+`src/DirectoryPersonPicker.jsx` is a searchable typeahead over display name and
+email. Focusing the field lists every person; typing narrows the list locally,
+and the arrow keys, Enter, and Escape move through and close the list without
+closing the dialog. Selecting a person replaces the field with the selected
+name (role/email and directory id underneath) and a Change action, and a
+"Directory person" context card adds role, email, team labels, and the
+directory id so the approval identity is explicit.
+
+The selected person's directory id is the approval identity: `submitApproval`
+posts `{approvedBy: person.id}` to
+`/api/v1/notifications/templates/{id}/approve` and the success notice names the
+person (`Template {code} v{version} approved by {name}.`). Directory ids are
+stable public identifiers such as `a-adjuster`, so the field no longer requires
+a UUID; the manual fallback accepts the same id shape.
+
+A directory 503 (or any lookup failure) is contained in the dialog: the context
+explains the failure, the typeahead is replaced by a plain approver id input,
+and approval still posts `{approvedBy}`. An empty people list takes the same
+fallback. Failures are never cached, so reopening the dialog retries; a
+successful directory read is cached.
 
 ## Tests
 
@@ -227,10 +257,16 @@ channel as `null`; new-version prefill of code, locale, channel, body, and
 version + 1 from the API-shaped `code`/`version`/`bodyTemplate` response; the
 same-code history order and source marker; editing the cloned body; duplicate
 409 and validation errors contained in the dialog; the corrected DRAFT create;
-approver UUID validation and approval; retirement; a 409 approval conflict that
-reloads the winning state; and a contained list-load failure that leaves the
-notification queue usable. Run with `npm test`; the Playwright config starts the
-dev server on port 3010.
+directory approver required, searched by email, selected person context and
+`{approvedBy}` payload, success notice with the recorded name, retirement, and
+a 409 approval conflict that reloads the winning state; and a contained
+list-load failure that leaves the notification queue usable.
+`tests/approver-directory.spec.js` covers the one-time directory request and
+cache (a second dialog open reads nothing new), name and email search, keyboard
+selection, the selected-person context and approval payload, the directory 503
+fallback with manual approver entry and retry on reopen, and the empty-directory
+fallback with the required-approver validation. Run with `npm test`; the
+Playwright config starts the dev server on port 3010.
 
 ## Remaining gaps
 

@@ -1,9 +1,16 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { api, errorText } from './api.js';
+import DirectoryPersonPicker from './DirectoryPersonPicker.jsx';
+import {
+  directoryPersonName,
+  directoryTeamLabel,
+  getCachedDirectory,
+  loadDirectory
+} from './directory.js';
 
 const TEMPLATES_ENDPOINT = '/api/v1/notifications/templates';
 const TEMPLATE_CHANNELS = ['IN_APP', 'EMAIL', 'SMS', 'PUSH', 'WEBHOOK', 'TASK', 'DIGEST'];
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const APPROVER_ID_MAX_LENGTH = 128;
 const LOCALE_PATTERN = /^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/;
 const FILTER_PLACEHOLDER = 'Filter templates by code, version, locale, channel, status, or approval…';
 const VERSION_HISTORY_LIMIT = 5;
@@ -167,7 +174,7 @@ function labelOf(template) {
   return version === '—' ? code : `${code} v${version}`;
 }
 
-function filterTemplates(templates, filter) {
+function filterTemplates(templates, filter, people = []) {
   const term = filter.trim().toLowerCase();
   if (!term) return templates;
   return templates.filter((template) => {
@@ -181,6 +188,7 @@ function filterTemplates(templates, filter) {
       status,
       isApproved(template) ? 'approved yes' : 'not approved no',
       template.approvedBy,
+      directoryPersonName(people, template.approvedBy),
       template.body,
       template.bodyTemplate
     ].some((value) => String(value || '').toLowerCase().includes(term));
@@ -221,10 +229,10 @@ function Field({ label, htmlFor, className = '', children }) {
 /**
  * Template registry and approval gate.
  *
- * A template is created as DRAFT. Approval records the approver UUID and
- * activates it; retirement is allowed for DRAFT and ACTIVE rows. Every action
- * reloads the registry so a 409 caused by a concurrent transition is resolved
- * from the server's actual state rather than a stale row.
+ * A template is created as DRAFT. Approval records a directory person as the
+ * approver and activates it; retirement is allowed for DRAFT and ACTIVE rows.
+ * Every action reloads the registry so a 409 caused by a concurrent transition
+ * is resolved from the server's actual state rather than a stale row.
  */
 export default function TemplatesPanel() {
   const [templates, setTemplates] = useState([]);
@@ -237,12 +245,23 @@ export default function TemplatesPanel() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [creating, setCreating] = useState(false);
   const [approveTarget, setApproveTarget] = useState(null);
-  const [approverId, setApproverId] = useState('');
+  const [approver, setApprover] = useState(null);
+  const [manualApproverId, setManualApproverId] = useState('');
+  const [directory, setDirectory] = useState(() => getCachedDirectory() || { people: [], teams: [] });
+  const [directoryStatus, setDirectoryStatus] = useState(() => {
+    const cached = getCachedDirectory();
+    if (!cached) return 'idle';
+    return cached.people.length > 0 ? 'ready' : 'empty';
+  });
+  const [directoryError, setDirectoryError] = useState('');
   const [approving, setApproving] = useState(false);
   const [retiringId, setRetiringId] = useState('');
   const aliveRef = useRef(true);
 
-  const filteredTemplates = useMemo(() => filterTemplates(templates, filter), [templates, filter]);
+  const filteredTemplates = useMemo(
+    () => filterTemplates(templates, filter, directory.people),
+    [templates, filter, directory]
+  );
   const versionHistory = useMemo(
     () => (
       newVersionSource
@@ -251,6 +270,11 @@ export default function TemplatesPanel() {
     ),
     [templates, newVersionSource]
   );
+
+  /** The picker is usable only when the directory actually returned people. */
+  const directoryPeople = Array.isArray(directory.people) ? directory.people : [];
+  const directoryUnavailable = directoryStatus === 'error' || directoryStatus === 'empty';
+  const selectedApproverId = approver?.id || '';
 
   useEffect(() => {
     aliveRef.current = true;
@@ -280,12 +304,46 @@ export default function TemplatesPanel() {
       setCreateOpen(false);
       setNewVersionSource(null);
       setApproveTarget(null);
-      setApproverId('');
+      setApprover(null);
+      setManualApproverId('');
       setError('');
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [createOpen, approveTarget, creating, approving]);
+
+  /**
+   * Loads the people directory once per process. The request starts when the
+   * approval dialog opens, and a later dialog reuses the cached value. The
+   * lookup is an enhancement: a failure is reported in the dialog and the
+   * manual approver field keeps approval available.
+   */
+  async function ensureDirectory() {
+    const cached = getCachedDirectory();
+    if (cached) {
+      setDirectory(cached);
+      setDirectoryStatus(cached.people.length > 0 ? 'ready' : 'empty');
+      setDirectoryError('');
+      return cached;
+    }
+
+    setDirectoryStatus('loading');
+    setDirectoryError('');
+    try {
+      const loaded = await loadDirectory();
+      if (aliveRef.current) {
+        setDirectory(loaded);
+        setDirectoryStatus(loaded.people.length > 0 ? 'ready' : 'empty');
+      }
+      return loaded;
+    } catch (cause) {
+      if (aliveRef.current) {
+        setDirectoryStatus('error');
+        setDirectoryError(errorText(cause));
+      }
+      return null;
+    }
+  }
 
   /**
    * Reloads the registry without discarding the error an action just set. That
@@ -403,14 +461,19 @@ export default function TemplatesPanel() {
     if (statusOf(template) !== 'DRAFT') return;
     setError('');
     setNotice('');
-    setApproverId('');
+    setApprover(null);
+    setManualApproverId('');
     setApproveTarget(template);
+    // The picker is the primary approver field, so the directory starts
+    // loading as soon as the dialog opens and is reused on later approvals.
+    void ensureDirectory();
   }
 
   function closeApprove() {
     if (approving) return;
     setApproveTarget(null);
-    setApproverId('');
+    setApprover(null);
+    setManualApproverId('');
     setError('');
   }
 
@@ -420,13 +483,23 @@ export default function TemplatesPanel() {
     setError('');
     setNotice('');
 
-    const approver = approverId.trim();
-    if (!approver) {
-      setError('Approver UUID is required.');
+    // The directory id is the approval identity. When the directory is
+    // unavailable the same field accepts an id typed by the operator; a manual
+    // value typed while the lookup was pending is ignored once the picker is
+    // available, so the request always matches what the dialog shows.
+    const approvedById = (
+      selectedApproverId || (directoryUnavailable ? manualApproverId : '')
+    ).trim();
+    if (!approvedById) {
+      setError(
+        directoryUnavailable
+          ? 'Approver id is required.'
+          : 'Select an approver from the directory.'
+      );
       return;
     }
-    if (!UUID_PATTERN.test(approver)) {
-      setError('Approver must be a valid UUID.');
+    if (approvedById.length > APPROVER_ID_MAX_LENGTH) {
+      setError(`Approver id must be ${APPROVER_ID_MAX_LENGTH} characters or fewer.`);
       return;
     }
 
@@ -434,20 +507,25 @@ export default function TemplatesPanel() {
     try {
       const body = await api(
         `${TEMPLATES_ENDPOINT}/${encodeURIComponent(approveTarget.id)}/approve`,
-        { method: 'POST', body: JSON.stringify({ approvedBy: approver }) }
+        { method: 'POST', body: JSON.stringify({ approvedBy: approvedById }) }
       );
       const approved = unwrapTemplate(body);
       if (approved) mergeTemplate(approved);
-      setNotice(`Template ${labelOf(approveTarget)} approved.`);
+      const approverName = approver?.displayName || '';
+      setNotice(
+        `Template ${labelOf(approveTarget)} approved${approverName ? ` by ${approverName}` : ''}.`
+      );
       setApproveTarget(null);
-      setApproverId('');
+      setApprover(null);
+      setManualApproverId('');
     } catch (cause) {
       setError(errorText(cause));
       // A conflict means another user already moved the template on. Close the
       // dialog and let the reload below show the winning state.
       if (cause?.status === 409) {
         setApproveTarget(null);
-        setApproverId('');
+        setApprover(null);
+        setManualApproverId('');
       }
     } finally {
       setApproving(false);
@@ -493,9 +571,9 @@ export default function TemplatesPanel() {
         <h4>Approval gate</h4>
         <p>
           <b>Only ACTIVE approved templates can send notifications.</b> A new template starts as
-          DRAFT. Approval records the approver UUID and activates it; RETIRED templates stay in the
-          registry for audit but can no longer send. The send path re-checks the template on every
-          send (NTF-01, NTF-14).
+          DRAFT. Approval records a directory person as the approver and activates it; RETIRED
+          templates stay in the registry for audit but can no longer send. The send path re-checks
+          the template on every send (NTF-01, NTF-14).
         </p>
       </section>
 
@@ -599,9 +677,20 @@ export default function TemplatesPanel() {
                           >
                             Approved
                           </span>
-                          <div className="eia-mono" style={{ marginTop: 2 }}>
+                          <div style={{ marginTop: 2 }}>
                             {template.approvedBy ? (
-                              <span title={template.approvedBy}>{shortId(template.approvedBy)}</span>
+                              <span
+                                className={
+                                  directoryPersonName(directoryPeople, template.approvedBy)
+                                    ? 'eia-approver-name'
+                                    : 'eia-mono'
+                                }
+                                title={template.approvedBy}
+                                data-testid={`template-approved-by-${template.id || rowKey}`}
+                              >
+                                {directoryPersonName(directoryPeople, template.approvedBy)
+                                  || shortId(template.approvedBy)}
+                              </span>
                             ) : 'Recorded'}
                             {template.approvedAt ? ` · ${formatInstant(template.approvedAt)}` : ''}
                           </div>
@@ -851,8 +940,9 @@ export default function TemplatesPanel() {
               <div>
                 <h2 id="approve-template-title" style={{ margin: 0 }}>Approve template</h2>
                 <p className="eia-record-subtitle">
-                  Approve <b>{labelOf(approveTarget)}</b>. Approval records the approver and makes
-                  the template ACTIVE, which is the only state that can send notifications.
+                  Approve <b>{labelOf(approveTarget)}</b>. The approver is a directory person;
+                  approving records them and makes the template ACTIVE, which is the only state that
+                  can send notifications.
                 </p>
               </div>
               <button type="button" className="eia-btn-ghost" onClick={closeApprove} disabled={approving}>
@@ -861,20 +951,86 @@ export default function TemplatesPanel() {
             </div>
 
             <form onSubmit={submitApproval} noValidate style={{ marginTop: 16 }}>
-              <Field label="Approver UUID" htmlFor="approverId">
-                <input
-                  id="approverId"
-                  value={approverId}
-                  onChange={(event) => setApproverId(event.target.value)}
-                  placeholder="0192f3a4-0000-7000-8000-000000000002"
-                  autoComplete="off"
-                  autoFocus
-                />
+              <Field label="Approver" htmlFor="approverDirectorySearch">
+                {directoryUnavailable ? (
+                  <input
+                    id="approverDirectorySearch"
+                    value={manualApproverId}
+                    onChange={(event) => setManualApproverId(event.target.value)}
+                    placeholder="e.g. c-manager or a user UUID"
+                    autoComplete="off"
+                    autoFocus
+                    disabled={approving}
+                    data-testid="approver-manual-id"
+                  />
+                ) : (
+                  <DirectoryPersonPicker
+                    id="approverDirectorySearch"
+                    people={directoryPeople}
+                    value={selectedApproverId}
+                    valueLabel={approver?.displayName || ''}
+                    onChange={setApprover}
+                    disabled={approving}
+                    loading={directoryStatus === 'idle' || directoryStatus === 'loading'}
+                    autoFocus
+                  />
+                )}
               </Field>
-              <p className="eia-muted" style={{ fontSize: 11, margin: '6px 0 14px' }}>
-                The approver must be the UUID of the approving user. The value is recorded with the
-                approval, so it is required and cannot be inferred from the browser session.
-              </p>
+
+              {directoryUnavailable ? (
+                <p className="eia-approver-fallback" data-testid="approver-directory-fallback">
+                  {directoryStatus === 'empty'
+                    ? 'The directory returned no people, so enter the approver id manually. '
+                    : `The people directory is unavailable (${directoryError || 'lookup failed'}), so enter the approver id manually. `}
+                  The id is still recorded with the approval.
+                </p>
+              ) : (
+                <p className="eia-muted" style={{ fontSize: 11, margin: '6px 0 14px' }}>
+                  Search the shared people directory by name or email. The selected person's
+                  directory id is recorded with the approval, so an approver is required and cannot
+                  be inferred from the browser session.
+                </p>
+              )}
+
+              {approver && (
+                <section
+                  className="eia-approver-context"
+                  aria-label="Selected approver"
+                  data-testid="approver-directory-context"
+                >
+                  <div className="eia-approver-context-head">
+                    <span className="eia-pill blue">Directory person</span>
+                    <b data-testid="approver-context-name">{approver.displayName}</b>
+                  </div>
+                  <dl className="eia-approver-facts">
+                    {approver.role && (
+                      <>
+                        <dt>Role</dt>
+                        <dd data-testid="approver-context-role">{approver.role}</dd>
+                      </>
+                    )}
+                    {approver.email && (
+                      <>
+                        <dt>Email</dt>
+                        <dd data-testid="approver-context-email">{approver.email}</dd>
+                      </>
+                    )}
+                    {Array.isArray(approver.teams) && approver.teams.length > 0 && (
+                      <>
+                        <dt>Teams</dt>
+                        <dd data-testid="approver-context-teams">
+                          {approver.teams
+                            .map((code) => directoryTeamLabel(directory.teams, code))
+                            .join(' · ')}
+                        </dd>
+                      </>
+                    )}
+                    <dt>Directory id</dt>
+                    <dd className="eia-mono" data-testid="approver-context-id">{approver.id}</dd>
+                  </dl>
+                </section>
+              )}
+
               <div className="eia-actions">
                 <button type="button" className="eia-btn-secondary" onClick={closeApprove} disabled={approving}>
                   Cancel

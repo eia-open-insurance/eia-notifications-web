@@ -92,8 +92,9 @@ No business logic; all actions go through the domain service.
 - Playwright activity coverage for the aggregate path/limit/tenant header, newest-first order,
   payload facts, empty and 503 states, explicit refresh, and selection refetch.
 - Top-level **Templates** section backed by `GET /api/v1/notifications/templates`: a registry table
-  with code, version, locale, channel, status, approval (approver and approved-at), and updated
-  columns, plus a client-side filter, result count, and empty state.
+  with code, version, locale, channel, status, approval (the directory approver name with a short-id
+  fallback, plus approved-at), and updated columns, plus a client-side filter, result count, and
+  empty state.
 - Create template dialog (`POST /api/v1/notifications/templates`) with code, version, locale,
   optional channel, and body; the registry creates the row as `DRAFT` and reloads it from the API.
 - **New version** action on every template row (including `RETIRED` rows) opens the same create
@@ -101,17 +102,26 @@ No business logic; all actions go through the domain service.
   to the source version + 1. A "Based on vX" context card and a compact same-code version history
   (newest first, with the source marked) frame the draft, and every field stays editable. Validation
   and duplicate 409 responses stay inside the dialog, and the created row is `DRAFT`.
-- Approve action (`POST .../templates/{id}/approve`) for `DRAFT` rows opens an approver dialog and
-  requires a valid approver UUID. Retire (`POST .../templates/{id}/retire`) is available for `DRAFT`
-  and `ACTIVE` rows only. Every transition reloads the registry, and a 409 conflict is shown in the
-  section while the table catches up to the server's winning state.
+- Approve action (`POST .../templates/{id}/approve`) for `DRAFT` rows opens an approver dialog backed
+  by the public `GET /api/v1/directory` people (read without the tenant header). The directory loads
+  once when the dialog first opens (cached afterwards), and the approver field is a typeahead over
+  display name and email. Selecting a person shows their name, role, email, teams, and directory id;
+  approval posts `{approvedBy}` with that directory id, and the table and success notice show the
+  recorded name. A directory failure (or an empty directory) is contained: the dialog explains it
+  and falls back to a manual approver id field, so approval still works. Retire
+  (`POST .../templates/{id}/retire`) is available for `DRAFT` and `ACTIVE` rows only. Every
+  transition reloads the registry, and a 409 conflict is shown in the section while the table
+  catches up to the server's winning state.
 - Visible approval-gate context: only `ACTIVE` templates with an approval record can send
   notifications; `DRAFT` and `RETIRED` templates remain visible for administration and audit.
 - Playwright template coverage for listing and filtering, approval-gate context and action
   availability, create payload (`DRAFT`, optional channel as `null`), validation, new-version
   prefill/version + 1/payload/create, same-code history ordering and source marker, duplicate 409
-  and validation errors contained in the dialog, approver UUID validation, approve, retire, a
-  contained 409 with reload, and a contained list-load failure.
+  and validation errors contained in the dialog, directory-backed approver selection and payload,
+  approve, retire, a contained 409 with reload, and a contained list-load failure. Dedicated
+  approver-directory coverage checks the one-time directory request/cache, name/email search,
+  selected-person context, `{approvedBy}` payload, the directory 503 fallback with manual entry,
+  retry after a failed lookup, and the empty-directory fallback.
 
 ## Local verification
 

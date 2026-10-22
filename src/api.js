@@ -20,12 +20,15 @@ export function problemMessage(body, fallback) {
 }
 
 export async function api(path, options = {}) {
+  // `tenant: false` marks public master data (for example the people
+  // directory), which the gateway serves without tenant scoping.
+  const { tenant = true, ...init } = options;
   const response = await fetch(path, {
-    ...options,
+    ...init,
     headers: {
-      'X-EIA-Tenant': TENANT,
-      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-      ...(options.headers || {})
+      ...(tenant ? { 'X-EIA-Tenant': TENANT } : {}),
+      ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(init.headers || {})
     }
   });
   let body = null;

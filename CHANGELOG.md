@@ -76,14 +76,22 @@ The format is based on Keep a Changelog and the project uses Semantic Versioning
   history (newest first, source marked), and every field remains editable. Validation and duplicate
   409 responses stay inside the dialog; the created row is DRAFT and the success notice names the
   base version.
-- Approve action for DRAFT templates through an approver UUID dialog (`approvedBy`), and retire for
-  DRAFT/ACTIVE templates. Actions reload the registry; approval and retirement responses are merged
-  first, and a 409 conflict is contained in the section while the reload shows the winning state.
+- Approve action for DRAFT templates through a directory-backed approver picker, and retire for
+  DRAFT/ACTIVE templates. Opening the approval dialog reads the public `GET /api/v1/directory` once
+  (without the tenant header) and caches the normalized people/teams; the approver field is a
+  typeahead over display name and email, shows the selected person's name, role, email, teams, and
+  directory id, and posts `{approvedBy}` with that id. The success notice and the Approved column
+  name the recorded approver. A directory failure or an empty people list falls back to a manual
+  approver id field, and a failed lookup is retried on the next open. Actions reload the registry;
+  approval and retirement responses are merged first, and a 409 conflict is contained in the section
+  while the reload shows the winning state.
 - Playwright template coverage for list/filter, gate context and action availability, create payload
   and DRAFT result, validation, new-version prefill/version + 1/payload/create, same-code history
-  ordering and source marker, duplicate 409 and validation errors contained in the dialog, approver
-  UUID validation, approve, retire, contained 409 with reload, and a contained registry load
-  failure.
+  ordering and source marker, duplicate 409 and validation errors contained in the dialog,
+  directory-backed approver selection and payload, approve, retire, contained 409 with reload, and a
+  contained registry load failure. Dedicated approver-directory coverage for the one-time directory
+  request/cache, name/email search, selected-person context, `{approvedBy}` payload, the directory
+  503 fallback with manual entry and retry, and the empty-directory fallback.
 - Source-scoped notification queue: `/notifications?sourceType=…&sourceId=…` (and the root route)
   loads `GET /api/v1/notifications?sourceType=…&sourceId=…`. A filter banner/chip shows the source
   type plus the human reference resolved from the filtered rows (short id fallback), selecting a

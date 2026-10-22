@@ -2,7 +2,37 @@ import { test, expect } from '@playwright/test';
 
 const TENANT = '11111111-1111-7111-8111-111111111111';
 const API = '**/api/v1/notifications**';
+const DIRECTORY_API = '**/api/v1/directory';
 const APPROVER = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+
+/**
+ * The public people directory. The ids are the gateway's stable public
+ * identifiers (`a-adjuster`, `c-manager`), not UUIDs, so the approval flow must
+ * carry the selected person's directory id as `approvedBy`.
+ */
+const DIRECTORY = {
+  people: [
+    {
+      id: 'a-adjuster',
+      displayName: 'A. Adjuster',
+      email: 'a.adjuster@eia.example',
+      role: 'CLAIMS_ADJUSTER',
+      teams: ['DIRECT_CLAIMS', 'MAJOR_LOSS']
+    },
+    {
+      id: 'c-manager',
+      displayName: 'C. Manager',
+      email: 'c.manager@eia.example',
+      role: 'CLAIMS_MANAGER',
+      teams: ['SUPERVISORY']
+    }
+  ],
+  teams: [
+    { code: 'DIRECT_CLAIMS', label: 'Direct claims' },
+    { code: 'MAJOR_LOSS', label: 'Major loss' },
+    { code: 'SUPERVISORY', label: 'Supervisory' }
+  ]
+};
 
 function notification(overrides = {}) {
   return {
@@ -92,6 +122,21 @@ function problem(code, detail, status = 400) {
 async function installApi(page, state) {
   state.notifications = state.notifications || [notification()];
   state.templateGets = 0;
+  state.directory = state.directory || DIRECTORY;
+  state.directoryGets = 0;
+
+  await page.route(DIRECTORY_API, async (route) => {
+    state.directoryGets += 1;
+    if (state.directoryFailure) {
+      await json(
+        route,
+        503,
+        problem('EIA-GTW-9701', 'The people directory could not be reached.', 503)
+      );
+      return;
+    }
+    await json(route, 200, state.directory);
+  });
 
   await page.route(API, async (route) => {
     const request = route.request();
@@ -584,7 +629,7 @@ test('keeps validation and duplicate errors inside the new-version modal', async
   });
 });
 
-test('requires an approver UUID and approves a DRAFT template', async ({ page }) => {
+test('requires a directory approver and approves a DRAFT template', async ({ page }) => {
   const draft = template({
     id: '0192f3a4-0000-7000-8000-000000000301',
     templateCode: 'CLAIM_NOTICE_DRAFT',
@@ -618,25 +663,40 @@ test('requires an approver UUID and approves a DRAFT template', async ({ page })
   await page.getByRole('button', { name: 'Approve CLAIM_NOTICE_DRAFT v1', exact: true }).click();
   const dialog = page.getByTestId('approve-template-dialog');
   await expect(dialog).toBeVisible();
+  const search = dialog.getByTestId('directory-person-search');
+  await expect(search).toBeVisible();
   const submit = dialog.getByRole('button', { name: 'Approve', exact: true });
 
+  // The dialog opens the directory request and offers every person as an option.
+  await expect(dialog.getByTestId('directory-person-option-c-manager')).toBeVisible();
+  expect(state.directoryGets).toBe(1);
+  await search.press('Escape');
+  await expect(dialog).toBeVisible();
   await submit.click();
-  await expect(dialog.getByRole('alert')).toContainText('Approver UUID is required.');
+  await expect(dialog.getByRole('alert')).toContainText('Select an approver from the directory.');
   expect(approvePayload).toBeNull();
 
-  await dialog.getByLabel('Approver UUID').fill('not-a-uuid');
-  await submit.click();
-  await expect(dialog.getByRole('alert')).toContainText('Approver must be a valid UUID.');
-  expect(approvePayload).toBeNull();
+  // Search narrows by email, and the selected person is shown by name.
+  await search.fill('c.manager');
+  await expect(dialog.getByTestId('directory-person-option-a-adjuster')).toHaveCount(0);
+  await dialog.getByTestId('directory-person-option-c-manager').click();
+  await expect(dialog.getByTestId('directory-person-selected-name')).toHaveText('C. Manager');
+  const context = dialog.getByTestId('approver-directory-context');
+  await expect(context).toContainText('Directory person');
+  await expect(dialog.getByTestId('approver-context-role')).toHaveText('CLAIMS_MANAGER');
+  await expect(dialog.getByTestId('approver-context-email')).toHaveText('c.manager@eia.example');
+  await expect(dialog.getByTestId('approver-context-teams')).toHaveText('Supervisory');
+  await expect(dialog.getByTestId('approver-context-id')).toHaveText('c-manager');
 
-  await dialog.getByLabel('Approver UUID').fill(APPROVER);
   await submit.click();
 
   await expect(dialog).toBeHidden();
-  await expect(page.getByRole('status')).toContainText('Template CLAIM_NOTICE_DRAFT v1 approved.');
+  await expect(page.getByRole('status')).toContainText(
+    'Template CLAIM_NOTICE_DRAFT v1 approved by C. Manager.'
+  );
   await expect(page.getByTestId(`template-status-${draft.id}`)).toHaveText('ACTIVE');
   await expect(page.getByTestId(`template-approved-${draft.id}`)).toContainText('Approved');
-  await expect(page.getByTestId(`template-row-${draft.id}`)).toContainText('cccccccc…');
+  await expect(page.getByTestId(`template-approved-by-${draft.id}`)).toHaveText('C. Manager');
   await expect(
     page.getByRole('button', { name: 'Approve CLAIM_NOTICE_DRAFT v1', exact: true })
   ).toHaveCount(0);
@@ -644,8 +704,9 @@ test('requires an approver UUID and approves a DRAFT template', async ({ page })
     page.getByRole('button', { name: 'Retire CLAIM_NOTICE_DRAFT v1', exact: true })
   ).toBeVisible();
 
-  expect(approvePayload).toEqual({ approvedBy: APPROVER });
+  expect(approvePayload).toEqual({ approvedBy: 'c-manager' });
   expect(state.templateGets).toBeGreaterThanOrEqual(2);
+  expect(state.directoryGets).toBe(1);
 });
 
 test('retires an ACTIVE template and removes the retire action from RETIRED rows', async ({ page }) => {
@@ -727,7 +788,9 @@ test('contains a 409 approval conflict and reloads the winning template state', 
   const getsBeforeApproval = state.templateGets;
   await page.getByRole('button', { name: 'Approve RACE_NOTICE v1', exact: true }).click();
   const dialog = page.getByTestId('approve-template-dialog');
-  await dialog.getByLabel('Approver UUID').fill(APPROVER);
+  await expect(dialog.getByTestId('directory-person-option-c-manager')).toBeVisible();
+  await dialog.getByTestId('directory-person-search').fill('c.manager');
+  await dialog.getByTestId('directory-person-option-c-manager').click();
   await dialog.getByRole('button', { name: 'Approve', exact: true }).click();
 
   await expect(dialog).toBeHidden();

@@ -918,6 +918,46 @@ main [role="status"] {
 /* Template registry */
 .eia-workspace-tabs { margin-top: 4px; }
 
+/* Directory-backed approver field */
+.eia-directory-picker { position: relative; }
+.eia-picker-option.active { background: #eef5fb !important; }
+.eia-approver-context {
+  margin: 4px 0 14px;
+  padding: 10px 12px;
+  background: #f7fafc;
+  border: 1px solid #dce7f0;
+  border-left: 3px solid var(--eia-blue);
+  border-radius: 6px;
+}
+.eia-approver-context-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.eia-approver-context-head b { font-size: 12px; color: var(--eia-navy); }
+.eia-approver-facts {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr);
+  gap: 2px 10px;
+  margin: 8px 0 0;
+  font-size: 11px;
+}
+.eia-approver-facts dt { color: var(--eia-muted); }
+.eia-approver-facts dd { margin: 0; color: var(--eia-ink); overflow-wrap: anywhere; }
+.eia-approver-fallback {
+  margin: 6px 0 14px !important;
+  padding: 7px 9px;
+  background: #fff8e8;
+  border: 1px solid #f0dfb4;
+  border-left: 3px solid var(--eia-amber);
+  border-radius: 5px;
+  color: #7a5600 !important;
+  font-size: 11px !important;
+  line-height: 1.45;
+}
+.eia-approver-name { font-size: 11px; font-weight: 600; color: var(--eia-navy); }
+
 .eia-template-actions {
   display: flex;
   align-items: center;
