@@ -6,6 +6,17 @@ import { navigate, recordHref } from './navigation.js';
 import { partyEndpoint, partyRecordLabel } from './party.js';
 import { activityEvents, aggregateEventsEndpoint } from './events.js';
 import { api, errorText } from './api.js';
+import {
+  SOURCE_REFERENCE_MAX_LENGTH,
+  SOURCE_TYPES,
+  hasSource,
+  normalizeSourceType,
+  sourceDisplayValue,
+  sourceHref,
+  sourcePayload,
+  sourceTypeLabel,
+  validateSourceFields
+} from './source.js';
 import TemplatesPanel from './TemplatesPanel.jsx';
 
 const DEMO_PARTY_ID = '0192f3a4-0000-7000-8000-000000000002';
@@ -44,7 +55,10 @@ const EMPTY_FORM = {
   subject: '',
   body: '',
   templateCode: 'CLAIM_NOTICE_STANDARD',
-  scheduledAt: ''
+  scheduledAt: '',
+  sourceType: '',
+  sourceId: '',
+  sourceReference: ''
 };
 
 const OVERLAY_STYLE = {
@@ -96,6 +110,15 @@ function readPrefillSeed(params) {
   const templateCode = (params.get('templateCode') || '').trim();
   if (templateCode) form.templateCode = templateCode;
   else if (notificationType === 'DUNNING_NOTICE') form.templateCode = '';
+
+  const sourceType = normalizeSourceType(params.get('sourceType'));
+  if (sourceType) form.sourceType = sourceType;
+
+  const sourceId = (params.get('sourceId') || '').trim();
+  if (sourceId) form.sourceId = sourceId;
+
+  const sourceReference = (params.get('sourceReference') || '').trim();
+  if (sourceReference) form.sourceReference = sourceReference;
 
   return { form, recipientPicked };
 }
@@ -518,6 +541,87 @@ export default function App() {
     navigate(recordHref('party', partyId));
   }
 
+  function openSource(source) {
+    const href = sourceHref(source);
+    if (!href) return;
+    navigate(href);
+  }
+
+  /**
+   * Overview source value. A classified source links to the remote that owns
+   * the record, OTHER and link-less references stay plain text, and the human
+   * reference is shown when present. The full id stays visible under a shorter
+   * reference so an operator can still copy the canonical record id.
+   */
+  function renderSource(source) {
+    if (!hasSource(source)) return '—';
+    const href = sourceHref(source);
+    const label = sourceDisplayValue(source);
+    const typeLabel = sourceTypeLabel(source.sourceType);
+    const reference = String(source.sourceReference || '').trim();
+    const id = String(source.sourceId || '').trim();
+
+    return (
+      <>
+        {href ? (
+          <a
+            href={href}
+            onClick={(event) => {
+              event.preventDefault();
+              openSource(source);
+            }}
+            title={`Open ${typeLabel || 'source'} record ${id}`}
+            data-testid="overview-source-link"
+          >
+            {label}
+          </a>
+        ) : (
+          <span data-testid="overview-source-text">{label}</span>
+        )}
+        {typeLabel && (reference || id) && (
+          <span className="eia-muted"> · {typeLabel}</span>
+        )}
+        {reference && id && (
+          <div className="eia-mono" data-testid="overview-source-id" style={{ marginTop: 2 }}>
+            {id}
+          </div>
+        )}
+      </>
+    );
+  }
+
+  function sourceRelatedRecord(source) {
+    const href = sourceHref(source);
+    const label = sourceDisplayValue(source);
+    const typeLabel = sourceTypeLabel(source.sourceType);
+    const text = (
+      <>
+        Source · <b>{label}</b>
+        {typeLabel ? ` · ${typeLabel}` : ''}
+      </>
+    );
+    if (!href) {
+      return (
+        <span className="eia-related-record" data-testid="related-source-text">
+          {text}
+        </span>
+      );
+    }
+    return (
+      <a
+        className="eia-related-record"
+        href={href}
+        onClick={(event) => {
+          event.preventDefault();
+          openSource(source);
+        }}
+        data-testid="related-source-link"
+      >
+        {text}
+      </a>
+    );
+  }
+
   function selectNotification(notification) {
     if (notification.id !== selectedId) setActiveTab('overview');
     setSelectedId(notification.id);
@@ -563,6 +667,11 @@ export default function App() {
       setError('Select a recipient party before creating the notification.');
       return;
     }
+    const sourceIssues = validateSourceFields(form);
+    if (sourceIssues.length > 0) {
+      setError(sourceIssues.join(' '));
+      return;
+    }
     setCreating(true);
     const payload = {
       notificationType: form.notificationType,
@@ -574,6 +683,8 @@ export default function App() {
       templateVersion: form.templateCode ? 1 : null,
       scheduledAt: form.scheduledAt ? new Date(form.scheduledAt).toISOString() : null
     };
+    const source = sourcePayload(form);
+    if (source) Object.assign(payload, source);
     try {
       const created = await api('/api/v1/notifications', {
         method: 'POST',
@@ -774,6 +885,8 @@ export default function App() {
               <dd className="eia-mono">{notification.notificationNumber}</dd>
               <dt>Type</dt>
               <dd>{humanize(notification.notificationType)}</dd>
+              <dt>Source</dt>
+              <dd data-testid="overview-source">{renderSource(notification)}</dd>
               <dt>Recipient party</dt>
               <dd className="eia-mono">
                 {recipientId ? (
@@ -818,22 +931,48 @@ export default function App() {
           <p>
             A notification is a delivery artifact, not a business fact. The approved template,
             channel, and status govern delivery — how and when the message is sent — and the
-            notification never changes the source record that triggered it. The source business
-            record is not exposed in this API slice, so this workbench cannot link to it or invent a
-            link.
+            notification never changes the source record that triggered it. The source record is
+            linked here so an operator can trace the message back to the claim, policy, contract, or
+            payment it belongs to.
           </p>
-          {recipientId && (
+          {(hasSource(notification) || recipientId) && (
             <div className="links">
-              <a
-                href={recordHref('party', recipientId)}
-                onClick={(event) => {
-                  event.preventDefault();
-                  openParty(recipientId);
-                }}
-                data-testid="context-recipient-link"
-              >
-                Recipient party record · {recipientText}
-              </a>
+              {hasSource(notification) && (
+                sourceHref(notification) ? (
+                  <a
+                    href={sourceHref(notification)}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      openSource(notification);
+                    }}
+                    data-testid="context-source-link"
+                  >
+                    Source {sourceTypeLabel(notification.sourceType) || 'record'} ·{' '}
+                    {sourceDisplayValue(notification)}
+                  </a>
+                ) : (
+                  <span
+                    className="eia-muted"
+                    data-testid="context-source-text"
+                    style={{ fontSize: 11 }}
+                  >
+                    Source {sourceTypeLabel(notification.sourceType) || 'record'} ·{' '}
+                    {sourceDisplayValue(notification)}
+                  </span>
+                )
+              )}
+              {recipientId && (
+                <a
+                  href={recordHref('party', recipientId)}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    openParty(recipientId);
+                  }}
+                  data-testid="context-recipient-link"
+                >
+                  Recipient party record · {recipientText}
+                </a>
+              )}
             </div>
           )}
         </section>
@@ -846,23 +985,25 @@ export default function App() {
         >
           <h3>Related records</h3>
           <p className="eia-muted" style={{ marginTop: 4 }}>
-            The only related record this API slice exposes is the recipient party. The source
-            business record — the claim, policy, or payment that caused the notification — is not
-            exposed, so it is deliberately absent instead of being guessed.
+            The source record that caused this notification and the recipient party are the related
+            records this workbench links.
           </p>
-          {recipientId ? (
+          {recipientId || hasSource(notification) ? (
             <div className="eia-related-list">
-              <a
-                className="eia-related-record"
-                href={recordHref('party', recipientId)}
-                onClick={(event) => {
-                  event.preventDefault();
-                  openParty(recipientId);
-                }}
-                data-testid="related-recipient-party-link"
-              >
-                Recipient · <b>{recipientText}</b>
-              </a>
+              {hasSource(notification) && sourceRelatedRecord(notification)}
+              {recipientId && (
+                <a
+                  className="eia-related-record"
+                  href={recordHref('party', recipientId)}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    openParty(recipientId);
+                  }}
+                  data-testid="related-recipient-party-link"
+                >
+                  Recipient · <b>{recipientText}</b>
+                </a>
+              )}
             </div>
           ) : (
             <div className="eia-empty" data-testid="related-records-empty" style={{ marginTop: 10 }}>
@@ -1228,6 +1369,53 @@ export default function App() {
                   </div>
                 </section>
               )}
+              <section
+                className="eia-card span-3"
+                aria-label="Source record (optional)"
+                data-testid="create-source-card"
+              >
+                <h3>Source record</h3>
+                <p className="eia-muted" style={{ margin: '4px 0 10px', fontSize: 11 }}>
+                  Optional. Link this notification to the claim, policy, contract, payment, or other
+                  record that caused it. A source type and record id go together; the reference is the
+                  human label.
+                </p>
+                <div className="eia-form-grid">
+                  <Field label="Source type" htmlFor="sourceType">
+                    <select
+                      id="sourceType"
+                      value={form.sourceType}
+                      onChange={(event) => update('sourceType', event.target.value)}
+                    >
+                      <option value="">No source</option>
+                      {SOURCE_TYPES.map((type) => (
+                        <option key={type} value={type}>
+                          {sourceTypeLabel(type)} ({type})
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="Source record id" htmlFor="sourceId">
+                    <input
+                      id="sourceId"
+                      value={form.sourceId}
+                      onChange={(event) => update('sourceId', event.target.value)}
+                      placeholder="UUID of the source record"
+                      autoComplete="off"
+                    />
+                  </Field>
+                  <Field label="Source reference" htmlFor="sourceReference">
+                    <input
+                      id="sourceReference"
+                      value={form.sourceReference}
+                      onChange={(event) => update('sourceReference', event.target.value)}
+                      maxLength={SOURCE_REFERENCE_MAX_LENGTH}
+                      placeholder="CLM-2026-0000001"
+                      autoComplete="off"
+                    />
+                  </Field>
+                </div>
+              </section>
               <Field label="Subject" htmlFor="subject" className="span-2">
                 <input
                   id="subject"

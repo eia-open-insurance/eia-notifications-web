@@ -525,7 +525,7 @@ test('resolves the recipient party through the picker and submits recipientParty
   expect(partyRequests[0].headers['x-eia-tenant']).toBe(TENANT);
 });
 
-test('explains delivery context and links the recipient without inventing a source record', async ({ page }) => {
+test('explains delivery context and shows no source when the notification has none', async ({ page }) => {
   const state = await installNotificationMock(page, {
     queue: [NOTIFICATION_A],
     catalogue: [NOTIFICATION_A]
@@ -537,8 +537,10 @@ test('explains delivery context and links the recipient without inventing a sour
   await expect(context).toBeVisible();
   await expect(context).toContainText('notification is a delivery artifact');
   await expect(context).toContainText('template, channel, and status govern');
-  await expect(context).toContainText('source business record is not exposed in this API slice');
+  await expect(context).toContainText('source record is linked here');
+  await expect(context).not.toContainText('not exposed');
 
+  await expect(page.getByTestId('overview-source')).toHaveText('—');
   await expect(page.getByTestId('overview-recipient-link')).toHaveAttribute(
     'href',
     `/party?record=${PARTY.id}`
@@ -546,14 +548,14 @@ test('explains delivery context and links the recipient without inventing a sour
 
   const related = page.getByTestId('related-records');
   await expect(related).toBeVisible();
-  await expect(related).toContainText('source business record');
+  await expect(related).toContainText('source record that caused this notification');
+  await expect(related).not.toContainText('not exposed');
   await expect(page.getByTestId('related-recipient-party-link')).toHaveAttribute(
     'href',
     `/party?record=${PARTY.id}`
   );
 
-  // This API slice exposes no source business record, so no search endpoint
-  // is called to fabricate one.
+  // A notification without a source calls no extra endpoint to invent one.
   expect(state.requests.every((request) => request.path !== '/api/v1/notifications/search')).toBe(true);
 
   await page.getByTestId('overview-recipient-link').click();

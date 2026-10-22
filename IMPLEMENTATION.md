@@ -11,13 +11,13 @@ workbench holds no business logic. Every action calls the domain service.
 |---|---|
 | Notification queue | Lists notifications with number, subject, recipient, channel, and status; selecting one opens it and pushes `?record={id}` |
 | Queue filter | Prominent client-side filter over number, subject, recipient party, channel, and status, with a result count, empty state, and Clear action |
-| Create notification | Primary header action (`?new=1`); opens a compact dialog with a predictive recipient `EntityPicker` backed by `/api/v1/parties/search`. Supports URL prefill for type, channel, recipient, subject, body, and template |
+| Create notification | Primary header action (`?new=1`); opens a compact dialog with a predictive recipient `EntityPicker` backed by `/api/v1/parties/search` and an optional source-record block (type, id, reference). Supports URL prefill for type, channel, recipient, subject, body, template, and source |
 | Templates | Top-level section (switch beside Notifications) reading `GET /api/v1/notifications/templates`: code, version, locale, channel, status, approval, and updated columns with a client-side filter, count, and empty state. The approval-gate panel states that only ACTIVE approved templates can send |
 | Create template | Dialog with code, version, locale, optional channel, and body; `POST /api/v1/notifications/templates` creates a DRAFT and the registry reloads |
 | New template version | Row action on every template. Opens the same create dialog prefilled with the source row's code, locale, channel, and body and `version + 1`, with a "Based on vX" context card and a compact same-code version history. Creating posts the normal template payload and the new row is DRAFT |
 | Approve template | DRAFT-only action; requires a valid approver UUID and posts `{approvedBy}` to `POST /api/v1/notifications/templates/{id}/approve`, then reloads |
 | Retire template | DRAFT/ACTIVE-only action posting to `POST /api/v1/notifications/templates/{id}/retire`, then reloads |
-| Overview | Notification facts, recipient party cross-links, the "Why this matters" delivery context panel, and a related-records note |
+| Overview | Notification facts including the linked source record, recipient party cross-links, the "Why this matters" delivery context panel, and related records for the source and recipient |
 | Delivery | Record-level channel, status, recipient, scheduled, and sent state |
 | Template | Bound template code/version and the rendered subject/body |
 | Activity | Event-derived, append-only timeline read from `GET /api/v1/events/aggregate/{id}?limit=50` with `X-EIA-Tenant`: timestamp, readable event name, inbox status, record version, and payload facts (channel, recipient party, type, status). Card-local loading, empty, and error states; refreshes on demand and on selection |
@@ -38,12 +38,15 @@ directly through `GET /api/v1/notifications/{id}`.
 ## Create prefill
 
 `?new=1` accepts optional `notificationType`, `channel`, `recipientPartyId`,
-`subject`, `body`, and `templateCode` parameters. They seed the create dialog
-only when `new=1` is present; `?record=` links ignore them. Values are
-validated before use: an unknown type or channel falls back to the form
-default, and a `recipientPartyId` that is not a UUID falls back to the seeded
-demo recipient while the picker still shows it as selected. The type list
-includes `DUNNING_NOTICE`.
+`subject`, `body`, `templateCode`, `sourceType`, `sourceId`, and
+`sourceReference` parameters. They seed the create dialog only when `new=1` is
+present; `?record=` links ignore them. Values are validated before use: an
+unknown type, channel, or source type falls back to the form default, and a
+`recipientPartyId` that is not a UUID falls back to the seeded demo recipient
+while the picker still shows it as selected. The type list includes
+`DUNNING_NOTICE`. A source prefill keeps the supplied type/id pair and
+reference; an incomplete or malformed pair is caught by the form validation
+before any request is sent.
 
 Prefill is applied when the dialog is opened from the URL, not on every render
 or URL event. The initial mount seeds the draft; a later `popstate` only seeds
@@ -55,9 +58,31 @@ The queue filter is client-side over the loaded list; it does not call the searc
 endpoint. The create form resolves the recipient through
 `/api/v1/parties/search?q={term}&limit=8`, displays the party number/name label,
 and links to `/party?record={id}`. The Overview and Delivery tabs link the
-recipient party at the same route. The notification DTO exposes no source
-business record, so the context panel says so explicitly and the workbench does
-not invent claim, policy, or payment links.
+recipient party at the same route.
+
+## Source record linkage
+
+A notification may carry a flat `sourceType`/`sourceId`/`sourceReference` link
+to the business record that caused it. `src/source.js` owns the mapping:
+`DIRECT_CLAIM` links to `/direct-claims?record={sourceId}`, `ASSUMED_CLAIM` to
+`/assumed-claims?record={sourceId}`, `POLICY` to `/policy?record={sourceId}`,
+`CONTRACT` to `/contract?record={sourceId}`, and `PAYMENT` to
+`/payment?record={sourceId}`. `OTHER` has no owning remote and stays plain text.
+The human `sourceReference` is the link/text label when present; the short id is
+the fallback and the full id stays visible under a reference so it can be
+copied.
+
+The Overview shows the source in the notification facts, the "Why this matters"
+panel links it, and the related-records card links the source beside the
+recipient party. A notification without a source shows `—` and no placeholder
+claim about unavailable records.
+
+The create dialog's optional source block has type, record id, and reference.
+Type and id are all-or-nothing: a type without a UUID id, an id without a type,
+a non-UUID id, or a reference longer than 64 characters is rejected in the
+dialog before the POST. The payload adds whichever source fields were supplied
+and omits them entirely for the common no-source notification. The same values
+are accepted from `?new=1` prefill.
 
 Errors keep the structured `CODE: message` format from the API problem body.
 Create, send, and the problem-error paths are unchanged.
@@ -111,10 +136,14 @@ path re-checks the template on every send (NTF-01, NTF-14).
 `tests/notifications.spec.js` covers the operational layout, create payload,
 send transition, and problem errors. `tests/discovery.spec.js` covers `?record=`
 selection and `popstate`, deep-link discovery through the search projection,
-`?new=1`, prefill for all six parameters, partial prefill, an invalid recipient
-UUID, plain `?new=1`, edited/normal create opens, prefill parameters on a
-record link, queue filtering and clearing, the recipient picker request/payload
-and label/link, and the delivery context/cross-links. `tests/activity.spec.js`
+`?new=1`, prefill for the six base create parameters, partial prefill, an invalid
+recipient UUID, plain `?new=1`, edited/normal create opens, prefill parameters on
+a record link, queue filtering and clearing, the recipient picker request/payload
+and label/link, and the delivery context/cross-links. `tests/source.spec.js`
+covers the source link for every classified type (href and real navigation),
+`OTHER` and no-reference text fallbacks, source prefill, source create payload,
+the type/id pair validation and UUID check, and omission of source fields for a
+no-source draft. `tests/activity.spec.js`
 covers the event-timeline path/limit/tenant header, newest-first rendering,
 payload facts, the empty state, a contained 503, explicit refresh, and refetch
 when another notification is selected. `tests/templates.spec.js` covers the
@@ -132,9 +161,8 @@ dev server on port 3010.
 ## Remaining gaps
 
 - The Notifications API exposes delivery only at record level; per-attempt
-  delivery history and the source business record are not available in this
-  slice. The Activity tab surfaces emitted notification events, not delivery
-  attempts.
+  delivery history is not available in this slice. The Activity tab surfaces
+  emitted notification events, not delivery attempts.
 - Pagination, optimistic concurrency headers, and idempotency keys are not used
   by the remote. The template registry loads the full list and the new-version
   dialog derives its short history from that list; create uses the server's

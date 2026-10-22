@@ -16,8 +16,21 @@ The format is based on Keep a Changelog and the project uses Semantic Versioning
   with a result count, empty state, and Clear action.
 - Predictive recipient party lookup backed by `/api/v1/parties/search`, showing the party
   number/name label and linking to `/party?record={id}`.
-- Delivery context panel and recipient cross-links. The source business record is explicitly
-  described as unavailable in this API slice instead of being invented.
+- Delivery context panel and recipient cross-links.
+- Notification source links. The Overview lists the notification's `sourceType`/`sourceId`/
+  `sourceReference`; `DIRECT_CLAIM` and `ASSUMED_CLAIM` link to `/direct-claims` and
+  `/assumed-claims`, `POLICY` to `/policy`, `CONTRACT` to `/contract`, and `PAYMENT` to `/payment`,
+  each with `?record={sourceId}`. `OTHER` and a reference without a classified record stay plain
+  text. The human `sourceReference` is shown when present, with the short id as fallback and the
+  full id visible for copying. The "Why this matters" panel and related-records card now link the
+  source and no longer claim the source record is unavailable.
+- Create notification source block: optional source type, record id, and reference. Type and id are
+  all-or-nothing and the id must be a UUID; the reference is optional and limited to 64 characters.
+  Supplied source values are added to the create payload and omitted when the draft has no source.
+  `?new=1` also accepts `sourceType`, `sourceId`, and `sourceReference` prefill parameters.
+- Playwright source coverage for every classified link (href and navigation), `OTHER` and
+  no-reference text fallbacks, source prefill, source create payload, type/id pair validation, the
+  UUID check, and omission of source fields for a no-source draft.
 - Shared canonical `ui.css` and copied `EntityPicker.jsx`; shell-aware `navigate`/`recordHref`
   helpers for cross-vertical links.
 - Playwright discovery coverage for URL state, queue filtering, the party picker payload, and the

@@ -46,15 +46,19 @@ No business logic; all actions go through the domain service.
   and `popstate` keeps the workbench in step with shell navigation. A notification number missing from
   the loaded queue is resolved through `/api/v1/notifications/search`.
 - Prefilled create links: `?new=1` also accepts `notificationType`, `channel`, `recipientPartyId`,
-  `subject`, `body`, and `templateCode`; invalid enum values and non-UUID recipients fall back to the
-  defaults, `?record=` ignores them, and an edited or normally opened draft is never overwritten.
-  `DUNNING_NOTICE` is available in the notification type list.
+  `subject`, `body`, `templateCode`, `sourceType`, `sourceId`, and `sourceReference`; invalid enum
+  values and non-UUID recipients fall back to the defaults, `?record=` ignores them, and an edited or
+  normally opened draft is never overwritten. `DUNNING_NOTICE` is available in the notification type
+  list. A classified source requires both `sourceType` and a UUID `sourceId`; the reference is
+  optional.
 - Prominent client-side queue filter over notification number, subject, recipient party, channel, and
   status, with a result count and Clear action.
 - Predictive recipient party selection in the create form, backed by `/api/v1/parties/search`, with
   the party number/name label and a `/party?record=` cross-link.
-- Overview recipient party cross-links, a "Why this matters" delivery context panel, and a related
-  records note that does not invent the source business record the API slice does not expose.
+- Overview recipient party cross-links, a source-record link, a "Why this matters" delivery context
+  panel, and related records that link the source and the recipient. `DIRECT_CLAIM`, `ASSUMED_CLAIM`,
+  `POLICY`, `CONTRACT`, and `PAYMENT` sources open the owning remote with `?record={sourceId}`;
+  `OTHER` stays plain text. The human `sourceReference` is shown whenever the API supplies it.
 - Activity tab reads `GET /api/v1/events/aggregate/{notificationId}?limit=50` with the tenant header
   and renders an event-derived, append-only timeline: timestamp, readable event name plus the raw
   type, inbox status, record version, and payload facts (channel, recipient party, type, status).
@@ -63,7 +67,8 @@ No business logic; all actions go through the domain service.
 - `@swc/core` is pinned to exactly `1.10.7`.
 - Playwright tests mock the API and cover list + detail, create, send, problem errors, URL discovery,
   create prefill (full, partial, invalid recipient, plain `new=1`, and no overwrite after an edit),
-  queue filtering, the recipient picker payload, and the delivery context/cross-links.
+  queue filtering, the recipient picker payload, source links for every classified type, `OTHER` as
+  text, source prefill/create/validation, and the delivery context/cross-links.
 - Playwright activity coverage for the aggregate path/limit/tenant header, newest-first order,
   payload facts, empty and 503 states, explicit refresh, and selection refetch.
 - Top-level **Templates** section backed by `GET /api/v1/notifications/templates`: a registry table
