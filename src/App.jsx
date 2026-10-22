@@ -134,6 +134,7 @@ function readPrefillSeed(params) {
 
   const templateCode = (params.get('templateCode') || '').trim();
   if (templateCode) form.templateCode = templateCode;
+  else if (notificationType === 'DUNNING_NOTICE') form.templateCode = '';
 
   return { form, recipientPicked };
 }
