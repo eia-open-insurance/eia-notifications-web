@@ -66,6 +66,20 @@ No business logic; all actions go through the domain service.
   queue filtering, the recipient picker payload, and the delivery context/cross-links.
 - Playwright activity coverage for the aggregate path/limit/tenant header, newest-first order,
   payload facts, empty and 503 states, explicit refresh, and selection refetch.
+- Top-level **Templates** section backed by `GET /api/v1/notifications/templates`: a registry table
+  with code, version, locale, channel, status, approval (approver and approved-at), and updated
+  columns, plus a client-side filter, result count, and empty state.
+- Create template dialog (`POST /api/v1/notifications/templates`) with code, version, locale,
+  optional channel, and body; the registry creates the row as `DRAFT` and reloads it from the API.
+- Approve action (`POST .../templates/{id}/approve`) for `DRAFT` rows opens an approver dialog and
+  requires a valid approver UUID. Retire (`POST .../templates/{id}/retire`) is available for `DRAFT`
+  and `ACTIVE` rows only. Every transition reloads the registry, and a 409 conflict is shown in the
+  section while the table catches up to the server's winning state.
+- Visible approval-gate context: only `ACTIVE` templates with an approval record can send
+  notifications; `DRAFT` and `RETIRED` templates remain visible for administration and audit.
+- Playwright template coverage for listing and filtering, approval-gate context and action
+  availability, create payload (`DRAFT`, optional channel as `null`), validation, approver UUID
+  validation, approve, retire, a contained 409 with reload, and a contained list-load failure.
 
 ## Local verification
 

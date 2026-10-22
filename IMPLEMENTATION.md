@@ -12,6 +12,10 @@ workbench holds no business logic. Every action calls the domain service.
 | Notification queue | Lists notifications with number, subject, recipient, channel, and status; selecting one opens it and pushes `?record={id}` |
 | Queue filter | Prominent client-side filter over number, subject, recipient party, channel, and status, with a result count, empty state, and Clear action |
 | Create notification | Primary header action (`?new=1`); opens a compact dialog with a predictive recipient `EntityPicker` backed by `/api/v1/parties/search`. Supports URL prefill for type, channel, recipient, subject, body, and template |
+| Templates | Top-level section (switch beside Notifications) reading `GET /api/v1/notifications/templates`: code, version, locale, channel, status, approval, and updated columns with a client-side filter, count, and empty state. The approval-gate panel states that only ACTIVE approved templates can send |
+| Create template | Dialog with code, version, locale, optional channel, and body; `POST /api/v1/notifications/templates` creates a DRAFT and the registry reloads |
+| Approve template | DRAFT-only action; requires a valid approver UUID and posts `{approvedBy}` to `POST /api/v1/notifications/templates/{id}/approve`, then reloads |
+| Retire template | DRAFT/ACTIVE-only action posting to `POST /api/v1/notifications/templates/{id}/retire`, then reloads |
 | Overview | Notification facts, recipient party cross-links, the "Why this matters" delivery context panel, and a related-records note |
 | Delivery | Record-level channel, status, recipient, scheduled, and sent state |
 | Template | Bound template code/version and the rendered subject/body |
@@ -57,6 +61,33 @@ not invent claim, policy, or payment links.
 Errors keep the structured `CODE: message` format from the API problem body.
 Create, send, and the problem-error paths are unchanged.
 
+## Template registry and approval gate
+
+The **Templates** section is a top-level sibling of the notification queue. It
+loads `GET /api/v1/notifications/templates` with `X-EIA-Tenant` and renders a
+registry table, not a per-notification binding view: code, version, locale,
+channel (optional, shown as "Any channel"), status, approval (approver short id
+and approved-at), and updated. The filter is client-side over code, version,
+locale, channel, status, and approval state; it reloads nothing.
+
+A template is created through a dialog with code, version, locale, optional
+channel, and body. The payload is `{templateCode, templateVersion, locale,
+channel, body}` with `channel: null` when the optional field is blank, and the
+new row is a DRAFT. Approval is available only on DRAFT rows and requires an
+approver UUID; the action posts `{approvedBy}` to
+`/api/v1/notifications/templates/{id}/approve`. Retirement is available on
+DRAFT and ACTIVE rows and posts to `/retire`. RETIRED rows keep the actions
+column empty.
+
+Every create, approve, and retire response is merged into the table and then
+the registry is reloaded, so the table reflects the server. Errors stay inside
+the Templates section. A 409 on approval closes the approver dialog, shows the
+structured `CODE: message`, and allows the reload to display the transition
+that won; a failed list load shows the alert and an empty registry while the
+notification queue remains usable. The section carries an explicit approval
+gate note: only ACTIVE templates with an approval record can send, and the send
+path re-checks the template on every send (NTF-01, NTF-14).
+
 ## Tests
 
 `tests/notifications.spec.js` covers the operational layout, create payload,
@@ -68,8 +99,13 @@ record link, queue filtering and clearing, the recipient picker request/payload
 and label/link, and the delivery context/cross-links. `tests/activity.spec.js`
 covers the event-timeline path/limit/tenant header, newest-first rendering,
 payload facts, the empty state, a contained 503, explicit refresh, and refetch
-when another notification is selected. Run with `npm test`; the Playwright
-config starts the dev server on port 3010.
+when another notification is selected. `tests/templates.spec.js` covers the
+registry list, table columns, approval-gate context, action availability, and
+filter; create payload and DRAFT result; form validation and the optional
+channel as `null`; approver UUID validation and approval; retirement; a 409
+approval conflict that reloads the winning state; and a contained list-load
+failure that leaves the notification queue usable. Run with `npm test`; the
+Playwright config starts the dev server on port 3010.
 
 ## Remaining gaps
 
@@ -78,5 +114,6 @@ config starts the dev server on port 3010.
   slice. The Activity tab surfaces emitted notification events, not delivery
   attempts.
 - Pagination, optimistic concurrency headers, and idempotency keys are not used
-  by the remote.
+  by the remote. The template registry loads the full list; create uses the
+  server's unique constraint and surfaces a duplicate as a 409.
 - No accessibility audit beyond semantic labels, tab state, and live regions.

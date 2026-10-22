@@ -5,8 +5,9 @@ import EntityPicker from './EntityPicker.jsx';
 import { navigate, recordHref } from './navigation.js';
 import { partyEndpoint, partyRecordLabel } from './party.js';
 import { activityEvents, aggregateEventsEndpoint } from './events.js';
+import { api, errorText } from './api.js';
+import TemplatesPanel from './TemplatesPanel.jsx';
 
-const TENANT = '11111111-1111-7111-8111-111111111111';
 const DEMO_PARTY_ID = '0192f3a4-0000-7000-8000-000000000002';
 const PARTY_SEARCH_ENDPOINT = '/api/v1/parties/search';
 const SEARCH_LIMIT = 10;
@@ -62,46 +63,6 @@ const DIALOG_STYLE = {
   overflow: 'auto',
   boxShadow: '0 24px 70px rgba(11, 46, 79, 0.28)'
 };
-
-function problemMessage(body, fallback) {
-  if (!body) return fallback;
-  const summary = body.detail || body.title || body.message || fallback;
-  const errors = Array.isArray(body.errors) ? body.errors : Array.isArray(body.details) ? body.details : [];
-  if (errors.length === 0) return summary;
-  const details = errors
-    .map((error) => `${error.field || 'request'}: ${error.message || error.code || 'is invalid'}`)
-    .join('; ');
-  return `${summary} (${details})`;
-}
-
-async function api(path, options = {}) {
-  const response = await fetch(path, {
-    ...options,
-    headers: {
-      'X-EIA-Tenant': TENANT,
-      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-      ...(options.headers || {})
-    }
-  });
-  let body = null;
-  try {
-    body = await response.json();
-  } catch (ignored) {
-    // The domain may return an empty error body if it never reached the API.
-  }
-  if (!response.ok) {
-    const error = new Error(problemMessage(body, `Request failed with HTTP ${response.status}`));
-    error.code = body?.code;
-    error.status = response.status;
-    throw error;
-  }
-  return body;
-}
-
-function errorText(error) {
-  if (!error) return '';
-  return error.code ? `${error.code}: ${error.message}` : error.message;
-}
 
 /**
  * Seeds a create draft from `?new=1` prefill parameters. Only values the form
@@ -232,6 +193,7 @@ function Field({ label, htmlFor, className = '', children }) {
 }
 
 export default function App() {
+  const [section, setSection] = useState('notifications');
   const [notifications, setNotifications] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [detail, setDetail] = useState(null);
@@ -917,215 +879,244 @@ export default function App() {
       <header className="eia-page-head">
         <div>
           <div className="eyebrow">Operations · Notifications</div>
-          <h1>Notifications</h1>
+          <h1>{section === 'templates' ? 'Templates' : 'Notifications'}</h1>
           <p className="subtitle">
-            Notifications owns attention: it turns domain events into a message for the right person,
-            on the right channel, at the right time. Sending requires an approved template.
+            {section === 'templates'
+              ? 'The approval gate for outbound messages: only an ACTIVE template with a recorded approver can send a notification.'
+              : 'Notifications owns attention: it turns domain events into a message for the right person, on the right channel, at the right time. Sending requires an approved template.'}
           </p>
         </div>
-        <div className="eia-actions">
-          <button type="button" className="eia-btn-ghost" onClick={refresh}>
-            Refresh
-          </button>
-          <button type="button" onClick={openCreate} aria-haspopup="dialog">
-            Create notification
-          </button>
-        </div>
+        {section === 'notifications' && (
+          <div className="eia-actions">
+            <button type="button" className="eia-btn-ghost" onClick={refresh}>
+              Refresh
+            </button>
+            <button type="button" onClick={openCreate} aria-haspopup="dialog">
+              Create notification
+            </button>
+          </div>
+        )}
       </header>
 
-      {notice && <p role="status" style={{ margin: '0 0 12px' }}>{notice}</p>}
-      {error && !createOpen && <p role="alert" style={{ margin: '0 0 12px' }}>{error}</p>}
+      <nav className="eia-tabs eia-workspace-tabs" aria-label="Notifications workspace">
+        <button
+          type="button"
+          className={`eia-tab${section === 'notifications' ? ' active' : ''}`}
+          aria-pressed={section === 'notifications'}
+          onClick={() => setSection('notifications')}
+        >
+          Notifications
+        </button>
+        <button
+          type="button"
+          className={`eia-tab${section === 'templates' ? ' active' : ''}`}
+          aria-pressed={section === 'templates'}
+          onClick={() => setSection('templates')}
+          data-testid="templates-section-tab"
+        >
+          Templates
+        </button>
+      </nav>
 
-      <div className="eia-record-layout">
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0 }}>
-          <div
-            className="eia-queue-search"
-            role="search"
-            aria-label="Filter the notification queue"
-            style={{ display: 'flex', alignItems: 'center', gap: 6 }}
-          >
-            <div className="eia-search-box" style={{ height: 38, flex: 1 }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
-                <path d="m20 20-3.4-3.4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-              </svg>
-              <input
-                type="search"
-                value={queueFilter}
-                onChange={(event) => setQueueFilter(event.target.value)}
-                placeholder={QUEUE_FILTER_PLACEHOLDER}
-                aria-label="Filter notifications by number, subject, recipient, channel, or status"
-                autoComplete="off"
-                data-testid="notification-filter"
-              />
-            </div>
-            {queueFilter && (
-              <button type="button" className="eia-btn-ghost" onClick={() => setQueueFilter('')}>
-                Clear
-              </button>
-            )}
-          </div>
+      {section === 'templates' ? (
+        <TemplatesPanel />
+      ) : (
+        <>
+          {notice && <p role="status" style={{ margin: '0 0 12px' }}>{notice}</p>}
+          {error && !createOpen && <p role="alert" style={{ margin: '0 0 12px' }}>{error}</p>}
 
-          <aside className="eia-record-list" aria-label="Notification queue">
-            <div className="eia-record-list-head">
-              <strong>Notification queue</strong>
-              <span className="eia-muted" data-testid="queue-filter-count">
-                {loading
-                  ? '…'
-                  : queueFilter
-                    ? `${filteredNotifications.length} of ${notifications.length} notifications`
-                    : notifications.length}
-              </span>
-            </div>
-            {loading && <div className="empty">Loading notifications…</div>}
-            {!loading && notifications.length === 0 && (
-              <div className="empty">No notifications yet. Use Create notification to open the first record.</div>
-            )}
-            {!loading && notifications.length > 0 && filteredNotifications.length === 0 && (
-              <div className="empty" data-testid="queue-filter-empty">
-                No notifications match “{queueFilter.trim()}”. Clear the filter to see the full queue.
-              </div>
-            )}
-            {filteredNotifications.map((notification) => {
-              const isSelected = notification.id === selectedId;
-              return (
-                <button
-                  key={notification.id}
-                  type="button"
-                  className={isSelected ? 'selected' : ''}
-                  aria-current={isSelected ? 'true' : undefined}
-                  aria-label={`Open record ${notification.notificationNumber}`}
-                  onClick={() => selectNotification(notification)}
-                >
-                  <span className="record-primary">{notification.notificationNumber}</span>
-                  <span className="record-secondary">{notification.subject}</span>
-                  <span className="record-secondary">
-                    To {recipientLabelFor(notification) || shortId(notification.recipientPartyId)}
-                    {' · '}
-                    {notification.channel}
-                  </span>
-                  <span>
-                    <span className={`eia-pill ${statusTone(notification.status)}`}>
-                      {notification.status}
-                    </span>
-                  </span>
-                </button>
-              );
-            })}
-          </aside>
-        </div>
-
-        <section className="eia-record-panel" aria-label="Notification record">
-          {selected ? (
-            <>
-              <div className="eia-record-title">
-                <div>
-                  <h2>{selected.notificationNumber}</h2>
-                  <p className="eia-record-subtitle">{selected.subject}</p>
-                  <p className="eia-record-subtitle">
-                    <span
-                      className={`eia-pill ${statusTone(selected.status)}`}
-                      data-testid="notification-status"
-                    >
-                      {selected.status}
-                    </span>
-                    {' · '}Channel {selected.channel || '—'}
-                    {' · '}Recipient{' '}
-                    {selected.recipientPartyId ? (
-                      <a
-                        href={recordHref('party', selected.recipientPartyId)}
-                        onClick={(event) => {
-                          event.preventDefault();
-                          openParty(selected.recipientPartyId);
-                        }}
-                        data-testid="record-recipient-link"
-                      >
-                        {recipientLabelFor(selected) || shortId(selected.recipientPartyId)}
-                      </a>
-                    ) : '—'}
-                  </p>
+          <div className="eia-record-layout">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0 }}>
+              <div
+                className="eia-queue-search"
+                role="search"
+                aria-label="Filter the notification queue"
+                style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+              >
+                <div className="eia-search-box" style={{ height: 38, flex: 1 }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
+                    <path d="m20 20-3.4-3.4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                  </svg>
+                  <input
+                    type="search"
+                    value={queueFilter}
+                    onChange={(event) => setQueueFilter(event.target.value)}
+                    placeholder={QUEUE_FILTER_PLACEHOLDER}
+                    aria-label="Filter notifications by number, subject, recipient, channel, or status"
+                    autoComplete="off"
+                    data-testid="notification-filter"
+                  />
                 </div>
-                <div className="eia-actions">
-                  <button type="button" className="eia-btn-ghost" onClick={refresh} disabled={sending}>
-                    Refresh record
+                {queueFilter && (
+                  <button type="button" className="eia-btn-ghost" onClick={() => setQueueFilter('')}>
+                    Clear
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => send(selected)}
-                    disabled={!isSendable(selected.status) || sending}
-                    title={
-                      isSendable(selected.status)
-                        ? 'Send this notification'
-                        : `Only CREATED or QUEUED notifications can be sent (current status ${selected.status}).`
-                    }
-                  >
-                    {sending ? 'Sending…' : 'Send'}
-                  </button>
-                </div>
+                )}
               </div>
 
-              <div className="eia-summary-grid">
-                <div className="eia-card">
-                  <h3>Channel</h3>
-                  <div className="value" data-testid="summary-channel">{selected.channel || '—'}</div>
-                  <div className="eia-metric-label">Delivery channel</div>
+              <aside className="eia-record-list" aria-label="Notification queue">
+                <div className="eia-record-list-head">
+                  <strong>Notification queue</strong>
+                  <span className="eia-muted" data-testid="queue-filter-count">
+                    {loading
+                      ? '…'
+                      : queueFilter
+                        ? `${filteredNotifications.length} of ${notifications.length} notifications`
+                        : notifications.length}
+                  </span>
                 </div>
-                <div className="eia-card">
-                  <h3>Status</h3>
-                  <div className="value" data-testid="summary-status">{selected.status || '—'}</div>
-                  <div className="eia-metric-label">Notification lifecycle</div>
-                </div>
-                <div className="eia-card">
-                  <h3>Scheduled</h3>
-                  <div className="value" data-testid="summary-scheduled">
-                    {formatInstant(selected.scheduledAt)}
+                {loading && <div className="empty">Loading notifications…</div>}
+                {!loading && notifications.length === 0 && (
+                  <div className="empty">No notifications yet. Use Create notification to open the first record.</div>
+                )}
+                {!loading && notifications.length > 0 && filteredNotifications.length === 0 && (
+                  <div className="empty" data-testid="queue-filter-empty">
+                    No notifications match “{queueFilter.trim()}”. Clear the filter to see the full queue.
                   </div>
-                  <div className="eia-metric-label">Quiet hours or digest</div>
-                </div>
-                <div className="eia-card">
-                  <h3>Sent</h3>
-                  <div className="value" data-testid="summary-sent">{formatInstant(selected.sentAt)}</div>
-                  <div className="eia-metric-label">First successful send</div>
-                </div>
-              </div>
-
-              <nav className="eia-tabs" role="tablist" aria-label="Notification sections">
-                {TABS.map((tab) => (
-                  <button
-                    key={tab.id}
-                    id={`tab-${tab.id}`}
-                    type="button"
-                    role="tab"
-                    className={`eia-tab${activeTab === tab.id ? ' active' : ''}`}
-                    aria-selected={activeTab === tab.id}
-                    aria-controls={`panel-${tab.id}`}
-                    onClick={() => setActiveTab(tab.id)}
-                  >
-                    {tab.label}
-                  </button>
-                ))}
-              </nav>
-
-              {renderTab(selected)}
-            </>
-          ) : (
-            <div className="eia-empty">
-              <p style={{ marginTop: 0 }}>
-                {loading
-                  ? 'Loading the notification queue…'
-                  : 'Select a notification from the queue or create the first notification.'}
-              </p>
-              {!loading && (
-                <button type="button" onClick={openCreate} aria-haspopup="dialog">
-                  Create notification
-                </button>
-              )}
+                )}
+                {filteredNotifications.map((notification) => {
+                  const isSelected = notification.id === selectedId;
+                  return (
+                    <button
+                      key={notification.id}
+                      type="button"
+                      className={isSelected ? 'selected' : ''}
+                      aria-current={isSelected ? 'true' : undefined}
+                      aria-label={`Open record ${notification.notificationNumber}`}
+                      onClick={() => selectNotification(notification)}
+                    >
+                      <span className="record-primary">{notification.notificationNumber}</span>
+                      <span className="record-secondary">{notification.subject}</span>
+                      <span className="record-secondary">
+                        To {recipientLabelFor(notification) || shortId(notification.recipientPartyId)}
+                        {' · '}
+                        {notification.channel}
+                      </span>
+                      <span>
+                        <span className={`eia-pill ${statusTone(notification.status)}`}>
+                          {notification.status}
+                        </span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </aside>
             </div>
-          )}
-        </section>
-      </div>
 
-      {createOpen && (
+            <section className="eia-record-panel" aria-label="Notification record">
+              {selected ? (
+                <>
+                  <div className="eia-record-title">
+                    <div>
+                      <h2>{selected.notificationNumber}</h2>
+                      <p className="eia-record-subtitle">{selected.subject}</p>
+                      <p className="eia-record-subtitle">
+                        <span
+                          className={`eia-pill ${statusTone(selected.status)}`}
+                          data-testid="notification-status"
+                        >
+                          {selected.status}
+                        </span>
+                        {' · '}Channel {selected.channel || '—'}
+                        {' · '}Recipient{' '}
+                        {selected.recipientPartyId ? (
+                          <a
+                            href={recordHref('party', selected.recipientPartyId)}
+                            onClick={(event) => {
+                              event.preventDefault();
+                              openParty(selected.recipientPartyId);
+                            }}
+                            data-testid="record-recipient-link"
+                          >
+                            {recipientLabelFor(selected) || shortId(selected.recipientPartyId)}
+                          </a>
+                        ) : '—'}
+                      </p>
+                    </div>
+                    <div className="eia-actions">
+                      <button type="button" className="eia-btn-ghost" onClick={refresh} disabled={sending}>
+                        Refresh record
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => send(selected)}
+                        disabled={!isSendable(selected.status) || sending}
+                        title={
+                          isSendable(selected.status)
+                            ? 'Send this notification'
+                            : `Only CREATED or QUEUED notifications can be sent (current status ${selected.status}).`
+                        }
+                      >
+                        {sending ? 'Sending…' : 'Send'}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="eia-summary-grid">
+                    <div className="eia-card">
+                      <h3>Channel</h3>
+                      <div className="value" data-testid="summary-channel">{selected.channel || '—'}</div>
+                      <div className="eia-metric-label">Delivery channel</div>
+                    </div>
+                    <div className="eia-card">
+                      <h3>Status</h3>
+                      <div className="value" data-testid="summary-status">{selected.status || '—'}</div>
+                      <div className="eia-metric-label">Notification lifecycle</div>
+                    </div>
+                    <div className="eia-card">
+                      <h3>Scheduled</h3>
+                      <div className="value" data-testid="summary-scheduled">
+                        {formatInstant(selected.scheduledAt)}
+                      </div>
+                      <div className="eia-metric-label">Quiet hours or digest</div>
+                    </div>
+                    <div className="eia-card">
+                      <h3>Sent</h3>
+                      <div className="value" data-testid="summary-sent">{formatInstant(selected.sentAt)}</div>
+                      <div className="eia-metric-label">First successful send</div>
+                    </div>
+                  </div>
+
+                  <nav className="eia-tabs" role="tablist" aria-label="Notification sections">
+                    {TABS.map((tab) => (
+                      <button
+                        key={tab.id}
+                        id={`tab-${tab.id}`}
+                        type="button"
+                        role="tab"
+                        className={`eia-tab${activeTab === tab.id ? ' active' : ''}`}
+                        aria-selected={activeTab === tab.id}
+                        aria-controls={`panel-${tab.id}`}
+                        onClick={() => setActiveTab(tab.id)}
+                      >
+                        {tab.label}
+                      </button>
+                    ))}
+                  </nav>
+
+                  {renderTab(selected)}
+                </>
+              ) : (
+                <div className="eia-empty">
+                  <p style={{ marginTop: 0 }}>
+                    {loading
+                      ? 'Loading the notification queue…'
+                      : 'Select a notification from the queue or create the first notification.'}
+                  </p>
+                  {!loading && (
+                    <button type="button" onClick={openCreate} aria-haspopup="dialog">
+                      Create notification
+                    </button>
+                  )}
+                </div>
+              )}
+            </section>
+          </div>
+        </>
+      )}
+
+      {section === 'notifications' && createOpen && (
         <div
           style={OVERLAY_STYLE}
           onMouseDown={(event) => {

@@ -44,3 +44,16 @@ The format is based on Keep a Changelog and the project uses Semantic Versioning
   `DUNNING_NOTICE` is available in the notification type list.
 - Playwright prefill coverage for all six parameters, partial prefill, an invalid recipient UUID,
   plain `?new=1`, edited/normal opens, and prefill parameters on a record link.
+- Top-level Templates section reading `GET /api/v1/notifications/templates`: registry table (code,
+  version, locale, channel, status, approval with approver/approved-at, updated), client-side
+  filter, result count, and empty state. The section states the approval gate: only ACTIVE
+  templates with an approval record can send notifications.
+- Create template dialog posting `{templateCode, templateVersion, locale, channel, body}` (channel
+  optional and sent as `null`) to create a DRAFT, with client-side validation for code, version,
+  locale, and body.
+- Approve action for DRAFT templates through an approver UUID dialog (`approvedBy`), and retire for
+  DRAFT/ACTIVE templates. Actions reload the registry; approval and retirement responses are merged
+  first, and a 409 conflict is contained in the section while the reload shows the winning state.
+- Playwright template coverage for list/filter, gate context and action availability, create payload
+  and DRAFT result, validation, approver UUID validation, approve, retire, contained 409 with
+  reload, and a contained registry load failure.

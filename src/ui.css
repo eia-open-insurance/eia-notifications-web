@@ -191,6 +191,7 @@ body {
 .eia-pill.amber { background: #fff3d9; color: var(--eia-amber); }
 .eia-pill.red { background: #fde8e8; color: var(--eia-red); }
 .eia-pill.blue { background: #e7f0fa; color: var(--eia-blue); }
+.eia-pill.gray { background: #eef1f4; color: var(--eia-muted); }
 
 .eia-list { list-style: none; margin: 0; padding: 0; }
 .eia-list li {
@@ -904,4 +905,28 @@ main [role="status"] {
   color: #7a8d9f;
   font-size: 10px;
   overflow-wrap: anywhere;
+}
+
+/* Template registry */
+.eia-workspace-tabs { margin-top: 4px; }
+
+.eia-template-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.eia-template-actions button {
+  padding: 5px 9px !important;
+  font-size: 11px !important;
+}
+
+.eia-template-actions .eia-btn-danger {
+  background: #a83232 !important;
+  border-color: #a83232 !important;
+}
+
+.eia-template-actions .eia-btn-danger:hover {
+  background: #872626 !important;
 }
